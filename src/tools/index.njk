@@ -1,0 +1,70 @@
+---
+layout: layouts/base.njk
+title: Free trucking calculators
+metaTitle: Free trucking calculators · Dispatch Cove
+description: "Free calculators for U.S. truck dispatchers and owner-operators: true rate per mile with deadhead, dispatch fees, and freight factoring cost. Estimates only, not quotes or advice."
+date: 2026-11-26
+updated: 2026-11-26
+section: tools
+ogImage: /assets/images/og.png
+ogAlt: The Dispatch Cove logo on a cream card, with the tagline Guides for U.S. truck dispatchers and owner-operators.
+permalink: /tools/
+---
+<main id="main">
+  <section class="page-hero">
+    <div class="wrap">
+      <nav class="crumbs" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="/">Home</a></li>
+          <li aria-current="page">Tools</li>
+        </ol>
+      </nav>
+      <p class="eyebrow">Free tools</p>
+      <h1>{{ title }}</h1>
+      <p class="dek">Three small calculators for the arithmetic that comes up on a dispatch desk: what a load pays after deadhead, what a dispatch fee takes, and what a factoring advance leaves behind. They run in your browser. Nothing is sent to us.</p>
+      <p class="estimate-note">Every result is an estimate. The starting numbers are examples, not averages or recommendations. This is general information, not legal, tax, insurance, or financial advice.</p>
+    </div>
+  </section>
+  <section class="band">
+    <div class="wrap">
+      <div class="tool-grid">
+        {% for tool in tools %}
+        <a class="tool-card" href="/tools/{{ tool.slug }}/">
+          <p class="kicker">Calculator</p>
+          <h2>{{ tool.name }}</h2>
+          <p>{{ tool.short }}</p>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  <section class="band">
+    <div class="wrap">
+      <h2>Where these numbers show up in the guides</h2>
+      <ul class="related-list">
+        <li>
+          <a href="/load-boards/">Load Boards</a>
+          <p>How DAT and Truckstop present a rate, and why deadhead still has to be counted by hand.</p>
+        </li>
+        <li>
+          <a href="/getting-started/">Getting Started</a>
+          <p>The work of a new dispatcher, including how dispatch services are typically paid.</p>
+        </li>
+        <li>
+          <a href="/factoring/">Factoring</a>
+          <p>Recourse, non-recourse, and the contract terms that sit behind an advance and a reserve.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+</main>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": "{{ site.url }}/" },
+    { "@type": "ListItem", "position": 2, "name": "Tools", "item": "{{ site.url }}/tools/" }
+  ]
+}
+</script>

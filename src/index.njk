@@ -2,7 +2,7 @@
 layout: layouts/base.njk
 title: Practical guides for truck dispatchers and owner-operators
 metaTitle: Dispatch Cove — Guides for U.S. Truck Dispatchers
-description: Practical guides for U.S. truck dispatchers and owner-operators, covering load boards, freight factoring, dispatch software, and how to start a dispatch business.
+description: Practical guides for U.S. truck dispatchers and owner-operators, covering load boards, freight factoring, dispatch software, compliance, and how to start a dispatch business.
 date: 2026-11-26
 updated: 2026-11-26
 lcp: /assets/images/hero-home
@@ -18,7 +18,7 @@ permalink: /
         <p class="eyebrow">Dispatch &amp; freight · United States</p>
         <h1>{{ title }}</h1>
         <p class="dek">Dispatch Cove explains the work in plain English: how to book freight, how load boards and factoring actually operate, and where a tool or a service fits. A product shows up only when it belongs, and the link is labeled as an ad.</p>
-        <p class="meta-row"><span>Five shelves</span><span>Three starter guides</span><span>No invented tests</span></p>
+        <p class="meta-row"><span>Six shelves</span><span>Free calculators</span><span>No invented tests</span></p>
       </div>
       <figure class="frame">
         <img
@@ -38,7 +38,7 @@ permalink: /
   <section class="band" aria-labelledby="shelves-title">
     <div class="wrap">
       <div class="section-head">
-        <h2 id="shelves-title">The five shelves</h2>
+        <h2 id="shelves-title">The six shelves</h2>
       </div>
       <div class="shelf">
         {% for shelf in silos %}
@@ -57,6 +57,23 @@ permalink: /
             <h2>{{ shelf.name }}</h2>
             <p>{{ shelf.summary }}</p>
           </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="band" aria-labelledby="tools-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="tools-title">Free calculators</h2>
+      </div>
+      <div class="tool-grid">
+        {% for tool in tools %}
+        <a class="tool-card" href="/tools/{{ tool.slug }}/">
+          <p class="kicker">Calculator</p>
+          <h3>{{ tool.name }}</h3>
+          <p>{{ tool.short }}</p>
         </a>
         {% endfor %}
       </div>

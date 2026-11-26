@@ -72,6 +72,11 @@ for (const required of [
   "/factoring/",
   "/software/",
   "/owner-operators/",
+  "/compliance/",
+  "/tools/",
+  "/tools/true-rate-per-mile/",
+  "/tools/dispatch-fee/",
+  "/tools/factoring-cost/",
   "/about/",
   "/contact/",
   "/privacy-policy/",
@@ -79,6 +84,8 @@ for (const required of [
   "/getting-started/how-to-become-a-truck-dispatcher-with-no-experience/",
   "/load-boards/dat-vs-truckstop-for-a-new-dispatcher/",
   "/factoring/freight-factoring-recourse-vs-non-recourse/",
+  "/compliance/hours-of-service-for-dispatchers/",
+  "/compliance/ifta-due-dates/",
 ]) {
   if (!pages.has(required)) fail(`Missing required page ${required}`);
 }
@@ -176,7 +183,7 @@ if (!statSync(llmsPath, { throwIfNoEntry: false })) {
   const llms = readFileSync(llmsPath, "utf8");
   if (!llms.startsWith(`# ${site.name}`)) fail("llms.txt must start with the site name");
   for (const [urlPath] of pages) {
-    if (!/^\/(getting-started|load-boards|factoring|software|owner-operators)\/.+/.test(urlPath)) continue;
+    if (!/^\/(getting-started|load-boards|factoring|software|owner-operators|compliance)\/.+/.test(urlPath)) continue;
     if (!llms.includes(`${host}${urlPath}`)) {
       fail(`llms.txt is missing ${urlPath}`);
     }
@@ -184,7 +191,7 @@ if (!statSync(llmsPath, { throwIfNoEntry: false })) {
 }
 
 for (const [urlPath, html] of pages) {
-  if (!/^\/(getting-started|load-boards|factoring|software|owner-operators)\/.+/.test(urlPath)) continue;
+  if (!/^\/(getting-started|load-boards|factoring|software|owner-operators|compliance)\/.+/.test(urlPath)) continue;
   let article;
   for (const block of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
     try {

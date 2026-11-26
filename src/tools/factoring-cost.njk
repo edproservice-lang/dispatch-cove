@@ -1,0 +1,123 @@
+---
+layout: layouts/tool.njk
+title: Factoring cost calculator
+metaTitle: Factoring cost calculator · Dispatch Cove
+description: Estimate freight factoring cost from an invoice’s advance rate, fee, and reserve, including what the carrier may receive today versus at settlement. Example figures only, not a quote.
+dek: "A factoring agreement usually pays an advance when the invoice is sold, holds a reserve, and deducts a fee. This page shows those two payment moments from the percentages you enter."
+date: 2026-11-26
+updated: 2026-11-26
+permalink: /tools/factoring-cost/
+toc:
+  - id: calculator
+    label: The calculator
+  - id: advance-fee-and-reserve
+    label: Advance, fee, and reserve
+  - id: two-ways-the-fee-is-taken
+    label: When the fee comes out
+related:
+  - href: /factoring/freight-factoring-recourse-vs-non-recourse/
+    title: Freight factoring, recourse vs non-recourse
+    note: The contract terms that decide who holds the credit risk.
+  - href: /factoring/
+    title: Factoring
+    note: The shelf for invoice advances, chargebacks, and settlement.
+  - href: /tools/dispatch-fee/
+    title: Dispatch fee calculator
+    note: The other fee that may come out of the same load.
+  - href: /tools/
+    title: All calculators
+    note: True rate per mile is on the same shelf.
+faq:
+  - q: What do I receive today versus at settlement?
+    a: Under a simple structure, the advance is paid when the factor buys an eligible invoice. The reserve is released later, after the broker or shipper pays, minus the factoring fee if the fee comes out of that reserve. Some agreements deduct the fee from the advance instead. Choose the structure that matches your contract.
+  - q: Should the advance and the reserve add up to 100%?
+    a: Often they do, because the reserve is the part of the invoice that was not advanced. If your percentages do not add up to 100, the calculator will flag that. Read the agreement rather than forcing the numbers to fit.
+  - q: Are the starting percentages typical factoring rates?
+    a: No. The invoice amount, 90% advance, 3% fee, and 10% reserve are examples so the calculator has something to show when the page opens. They are not a quote and not a market average.
+  - q: Is factoring a loan?
+    a: Factoring is the sale of an eligible invoice under a contract, not a loan in the ordinary sense. Recourse, non-recourse, and chargeback language still decide who holds the risk if the invoice is unpaid or short-paid. This calculator does not interpret those terms.
+---
+<div class="calculator" id="calculator" data-calculator="factoring-cost" role="group" aria-labelledby="calculator-title">
+  <h2 id="calculator-title">The calculator</h2>
+  <p class="field-hint">The starting numbers are examples, not a factoring quote or a typical rate.</p>
+  <div class="calculator-panel">
+    <div>
+      <label for="fac-invoice">Invoice amount (dollars)</label>
+      <input id="fac-invoice" type="number" inputmode="decimal" min="0" step="0.01" value="2500">
+      <p class="field-hint">Example: 2,500.</p>
+    </div>
+    <div>
+      <label for="fac-advance">Advance rate (percent)</label>
+      <input id="fac-advance" type="number" inputmode="decimal" min="0" max="100" step="0.1" value="90">
+      <p class="field-hint">Example: 90. Not a quoted advance.</p>
+    </div>
+    <div>
+      <label for="fac-fee">Factoring fee (percent)</label>
+      <input id="fac-fee" type="number" inputmode="decimal" min="0" max="100" step="0.1" value="3">
+      <p class="field-hint">Example: 3. Not a typical or recommended fee.</p>
+    </div>
+    <div>
+      <label for="fac-reserve">Reserve (percent)</label>
+      <input id="fac-reserve" type="number" inputmode="decimal" min="0" max="100" step="0.1" value="10">
+      <p class="field-hint">Example: 10. Often the share that was not advanced.</p>
+    </div>
+    <div class="field-span choice-group">
+      <p id="fac-timing-label">When is the fee deducted?</p>
+      <div class="choice-row" role="radiogroup" aria-labelledby="fac-timing-label">
+        <label><input type="radio" name="fac-timing" value="reserve" checked> From the reserve, at settlement</label>
+        <label><input type="radio" name="fac-timing" value="advance"> From the advance, today</label>
+      </div>
+    </div>
+    <div class="calculator-actions">
+      <button class="btn" type="button" data-calculate>Calculate</button>
+    </div>
+    <div class="calculator-result" data-result aria-live="polite">
+      <h3>Estimate</h3>
+      <p class="calculator-error" data-error></p>
+      <div class="result-grid">
+        <div>
+          <p>Today (the advance)</p>
+          <strong data-today></strong>
+        </div>
+        <div>
+          <p>At settlement (the reserve, after the fee if taken then)</p>
+          <strong data-later></strong>
+        </div>
+        <div>
+          <p>Factoring fee</p>
+          <strong data-fee></strong>
+        </div>
+        <div>
+          <p>Total of the two payments</p>
+          <strong data-total></strong>
+        </div>
+      </div>
+      <p class="calculator-note" data-note hidden></p>
+      <p class="calculator-note">This is an estimate from the percentages you entered. It is not a quote, and it does not account for chargebacks, short pays, or extra fees in a contract.</p>
+    </div>
+  </div>
+</div>
+
+<article class="prose">
+  <h2 id="advance-fee-and-reserve">Advance, fee, and reserve</h2>
+  <p>Freight factoring is designed to close the gap between delivery and a broker’s payment terms. The carrier sells an eligible invoice to a factor and receives an advance. A reserve is often held back until the broker or shipper pays. A fee, set in the agreement, is deducted from one of those two moments.</p>
+  <p>The starting figures here — a $2,500 invoice, a 90% advance, a 3% fee, and a 10% reserve — are examples so the two payment moments are visible when you open the page. They are not a quote and not an average. Use the percentages in your own agreement.</p>
+  <p>The fee and the reserve are not the whole contract. Recourse, non-recourse, and chargeback language decide what happens if the invoice is unpaid or disputed. That is covered in <a href="/factoring/freight-factoring-recourse-vs-non-recourse/">freight factoring, recourse vs non-recourse</a>.</p>
+
+  <h2 id="two-ways-the-fee-is-taken">When the fee comes out</h2>
+  <p>Some agreements deduct the fee from the reserve when the invoice is collected. In the example above, that would mean $2,250 today (90% of $2,500) and $175 at settlement (the $250 reserve minus a $75 fee). Other agreements deduct the fee from the advance, so today is smaller and the reserve is released later without taking the fee a second time.</p>
+  <p>Choose the option that matches the contract in front of you. If the advance and reserve do not add up to 100%, the calculator will say so. Do not invent a split that the agreement does not use.</p>
+  <p>If a dispatch fee also comes out of the same load, calculate it separately with the <a href="/tools/dispatch-fee/">dispatch fee calculator</a>. The two contracts should be read on their own terms, not blended into a single unofficial percentage.</p>
+</article>
+
+{% if faq %}
+<section class="faq" aria-labelledby="faq-title">
+  <h2 id="faq-title">Questions people actually ask</h2>
+  {% for item in faq %}
+  <details>
+    <summary>{{ item.q }}</summary>
+    <p>{{ item.a }}</p>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}

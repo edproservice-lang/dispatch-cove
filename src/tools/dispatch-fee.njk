@@ -1,0 +1,137 @@
+---
+layout: layouts/tool.njk
+title: Dispatch fee calculator
+metaTitle: Dispatch fee calculator · Dispatch Cove
+description: Calculate a truck dispatch fee as a percentage of linehaul or gross, or as a flat weekly rate, and see the break-even raise needed to stay even. Example figures only.
+dek: "A percentage fee can be charged on linehaul only or on the gross, including fuel surcharge. A flat weekly fee does not move with a single load. This page runs both kinds of arithmetic."
+date: 2026-11-26
+updated: 2026-11-26
+permalink: /tools/dispatch-fee/
+toc:
+  - id: calculator
+    label: The calculator
+  - id: percentage-or-weekly
+    label: Percentage or weekly
+  - id: the-break-even-raise
+    label: The break-even raise
+related:
+  - href: /getting-started/how-to-become-a-truck-dispatcher-with-no-experience/
+    title: How to become a truck dispatcher with no experience
+    note: How independent dispatchers usually get paid, and what belongs in the agreement.
+  - href: /getting-started/
+    title: Getting Started
+    note: The shelf for entering the work and opening a small dispatch office.
+  - href: /owner-operators/
+    title: Owner-Operators
+    note: The carrier side of a dispatch relationship.
+  - href: /tools/factoring-cost/
+    title: Factoring cost calculator
+    note: The other percentage that often comes out of the same invoice.
+faq:
+  - q: What is a dispatch fee usually charged on?
+    a: Many agreements use a percentage of the load. The important question is whether that percentage applies to linehaul only, or to gross revenue including fuel surcharge and other accessorials. The contract should say so in writing. This calculator lets you compare both, using numbers you enter.
+  - q: What does the break-even raise mean?
+    a: If you pay a percentage fee, you keep less than the gross unless the booked amount rises enough to cover the fee. The raise shown here is the increase needed on the figures the fee is charged on, so that what you keep matches the starting amount. It is arithmetic, not a forecast of what a dispatcher will negotiate.
+  - q: Are the starting percentages typical market rates?
+    a: No. The starting numbers are examples so the calculator has something to show when the page opens. There is no official standard dispatch fee.
+  - q: Does this include factoring?
+    a: No. Factoring is a separate contract. If both apply to the same invoice, run the factoring cost calculator as well, and read the written agreements rather than stacking unofficial rules of thumb.
+---
+<div class="calculator" id="calculator" data-calculator="dispatch-fee" role="group" aria-labelledby="calculator-title">
+  <h2 id="calculator-title">The calculator</h2>
+  <p class="field-hint">The starting numbers are examples, not a standard fee or a recommendation.</p>
+  <div class="calculator-panel">
+    <div class="field-span choice-group">
+      <p id="fee-mode-label">How is the fee charged?</p>
+      <div class="choice-row" role="radiogroup" aria-labelledby="fee-mode-label">
+        <label><input type="radio" name="fee-mode" value="percent" checked> Percentage of the load</label>
+        <label><input type="radio" name="fee-mode" value="weekly"> Flat weekly fee</label>
+      </div>
+    </div>
+    <div data-mode-percent class="calculator-panel field-span" style="padding:0;border:0;background:transparent;box-shadow:none;">
+      <div>
+        <label for="fee-linehaul">Linehaul (dollars)</label>
+        <input id="fee-linehaul" type="number" inputmode="decimal" min="0" step="0.01" value="2000">
+        <p class="field-hint">Example: 2,000.</p>
+      </div>
+      <div>
+        <label for="fee-fsc">Fuel surcharge (dollars)</label>
+        <input id="fee-fsc" type="number" inputmode="decimal" min="0" step="0.01" value="500">
+        <p class="field-hint">Example: 500. Use 0 if the confirmation has no fuel surcharge.</p>
+      </div>
+      <div>
+        <label for="fee-percent">Dispatch fee (percent)</label>
+        <input id="fee-percent" type="number" inputmode="decimal" min="0" max="99.99" step="0.1" value="8">
+        <p class="field-hint">Example: 8. This is not a typical or recommended rate.</p>
+      </div>
+      <div class="field-span choice-group">
+        <p id="fee-basis-label">Charge the percentage on</p>
+        <div class="choice-row" role="radiogroup" aria-labelledby="fee-basis-label">
+          <label><input type="radio" name="fee-basis" value="gross" checked> Gross (linehaul + fuel surcharge)</label>
+          <label><input type="radio" name="fee-basis" value="linehaul"> Linehaul only</label>
+        </div>
+      </div>
+    </div>
+    <div data-mode-weekly hidden class="calculator-panel field-span" style="padding:0;border:0;background:transparent;box-shadow:none;">
+      <div>
+        <label for="fee-weekly">Weekly dispatch fee (dollars)</label>
+        <input id="fee-weekly" type="number" inputmode="decimal" min="0" step="0.01" value="400">
+        <p class="field-hint">Example: 400 per week per truck. Not a quoted rate.</p>
+      </div>
+      <div>
+        <label for="fee-weekly-gross">Weekly gross (dollars)</label>
+        <input id="fee-weekly-gross" type="number" inputmode="decimal" min="0" step="0.01" value="8000">
+        <p class="field-hint">Example: 8,000 in gross for that truck that week.</p>
+      </div>
+    </div>
+    <div class="calculator-actions">
+      <button class="btn" type="button" data-calculate>Calculate</button>
+    </div>
+    <div class="calculator-result" data-result aria-live="polite">
+      <h3>Estimate</h3>
+      <p class="calculator-error" data-error></p>
+      <div class="result-grid">
+        <div>
+          <p>Fee is calculated on</p>
+          <strong data-basis></strong>
+        </div>
+        <div>
+          <p>Dispatch fee</p>
+          <strong data-fee></strong>
+        </div>
+        <div>
+          <p>What is left</p>
+          <strong data-keep></strong>
+        </div>
+        <div>
+          <p>Break-even raise</p>
+          <strong data-breakeven></strong>
+        </div>
+      </div>
+      <p class="calculator-note">This is an estimate from the numbers you entered. It is not a quote from a dispatch service and not a statement of what you should pay or charge.</p>
+    </div>
+  </div>
+</div>
+
+<article class="prose">
+  <h2 id="percentage-or-weekly">Percentage or weekly</h2>
+  <p>Independent dispatch services in the United States commonly charge a percentage of each load, a flat weekly or monthly fee per truck, or a mix of the two. There is no official standard rate. The agreement should also say what the percentage is charged on, and whether cancelled or unpaid loads still carry a fee.</p>
+  <p>The starting figures on this page — a $2,000 linehaul, a $500 fuel surcharge, and an 8% fee — are examples so the arithmetic is visible when you arrive. They are not a market survey. If your agreement uses a weekly fee, switch the calculator and enter that week’s fee and gross instead.</p>
+  <p>For the job itself, and for how pay is usually written into a first carrier agreement, see <a href="/getting-started/how-to-become-a-truck-dispatcher-with-no-experience/">how to become a truck dispatcher with no experience</a>. The <a href="/owner-operators/">owner-operator shelf</a> covers the carrier side of that relationship.</p>
+
+  <h2 id="the-break-even-raise">The break-even raise</h2>
+  <p>A percentage fee reduces what the carrier keeps unless the booked amount rises enough to cover it. If the fee is 8% of the figures it is charged on, those figures have to rise by 8 divided by 92, or about 8.7%, before the carrier keeps the same money as they would have without the fee. The calculator performs that step with the percentage you enter.</p>
+  <p>That is not a promise that a dispatcher will obtain that raise. It is only the arithmetic of the fee. Whether the service is worth it still depends on the rates booked, the empty miles avoided, and the office work that is included. For the per-mile view of a single load, use the <a href="/tools/true-rate-per-mile/">true rate per mile calculator</a>.</p>
+</article>
+
+{% if faq %}
+<section class="faq" aria-labelledby="faq-title">
+  <h2 id="faq-title">Questions people actually ask</h2>
+  {% for item in faq %}
+  <details>
+    <summary>{{ item.q }}</summary>
+    <p>{{ item.a }}</p>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}

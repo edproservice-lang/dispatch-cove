@@ -47,7 +47,7 @@ updated: 2026-11-26
           height="{{ shelf.height }}"
           fetchpriority="high"
           decoding="async">
-        <figcaption>Stock photo from Pixabay for this shelf.</figcaption>
+        <figcaption>{{ shelf.caption or "Stock photo from Pixabay for this shelf." }}</figcaption>
       </figure>
     </div>
   </section>
@@ -69,6 +69,17 @@ updated: 2026-11-26
         <p class="note">No guide is published on this shelf yet. The titles below are planned. They are not links, because the pages do not exist.</p>
         {% endif %}
       </div>
+      {% if shelf.tools and shelf.tools.length %}
+      <h2>Free calculators</h2>
+      <ul class="related-list">
+        {% for tool in shelf.tools %}
+        <li>
+          <a href="{{ tool.href }}">{{ tool.name }}</a>
+          {% if tool.note %}<p>{{ tool.note }}</p>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
       {% if shelf.soon and shelf.soon.length %}
       <h2>Still being written</h2>
       <ul class="soon-list">

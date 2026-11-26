@@ -1,0 +1,86 @@
+---
+layout: layouts/base.njk
+ogType: website
+section: tools
+---
+<main id="main" class="wrap page-hero">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <ol>
+      <li><a href="/">Home</a></li>
+      <li><a href="/tools/">Tools</a></li>
+      <li aria-current="page">{{ title }}</li>
+    </ol>
+  </nav>
+  <p class="eyebrow">Free calculator</p>
+  <h1>{{ title }}</h1>
+  <p class="dek">{{ dek }}</p>
+  <p class="estimate-note">This is an estimate for planning only. It is general information, not legal, tax, insurance, or financial advice, and it is not a quote from a load board, dispatcher, or factoring company.</p>
+  <div class="tool-layout">
+    {% if toc and toc.length %}
+    <nav class="toc" aria-label="On this page">
+      <p class="kicker">On this page</p>
+      <ol>
+        {% for item in toc %}
+        <li><a href="#{{ item.id }}">{{ item.label }}</a></li>
+        {% endfor %}
+        {% if faq %}<li><a href="#faq-title">Questions</a></li>{% endif %}
+      </ol>
+    </nav>
+    {% endif %}
+    {{ content | safe }}
+  </div>
+</main>
+{% if related and related.length %}
+<section class="wrap related" aria-labelledby="related-title">
+  <h2 id="related-title">Related guides</h2>
+  <ul class="related-list">
+    {% for item in related %}
+    <li>
+      <a href="{{ item.href }}">{{ item.title }}</a>
+      {% if item.note %}<p>{{ item.note }}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+<script src="/assets/js/calculators.js" defer></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Home", "item": "{{ site.url }}/" },
+        { "@type": "ListItem", "position": 2, "name": "Tools", "item": "{{ site.url }}/tools/" },
+        { "@type": "ListItem", "position": 3, "name": {{ title | dump | safe }}, "item": "{{ site.url }}{{ page.url }}" }
+      ]
+    },
+    {
+      "@type": "WebApplication",
+      "name": {{ title | dump | safe }},
+      "url": "{{ site.url }}{{ page.url }}",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Any",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "description": {{ description | dump | safe }},
+      "publisher": { "@id": "{{ site.url }}/#organization" }
+    }{% if faq %},
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {% for item in faq %}
+        {
+          "@type": "Question",
+          "name": {{ item.q | dump | safe }},
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": {{ item.a | dump | safe }}
+          }
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+      ]
+    }{% endif %}
+  ]
+}
+</script>

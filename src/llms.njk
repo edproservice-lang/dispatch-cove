@@ -18,6 +18,13 @@ eleventyExcludeFromCollections: true
 {% endfor %}
 {% endif -%}
 {%- endfor %}
+## Tools
+
+{% for tool in tools -%}
+- [{{ tool.name }} calculator]({{ site.url }}/tools/{{ tool.slug }}/): {{ tool.description }}
+{% endfor %}
+- [All calculators]({{ site.url }}/tools/): True rate per mile, dispatch fee, and factoring cost, in the browser.
+
 ## Optional
 
 - [About {{ site.name }}]({{ site.url }}/about/): Who publishes the site and how the guides are written.

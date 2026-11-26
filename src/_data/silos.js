@@ -20,6 +20,9 @@ export default [
       "How dispatch services charge",
       "What you need to start a dispatch business",
     ],
+    tools: [
+      { href: "/tools/dispatch-fee/", name: "Dispatch fee calculator", note: "See what a percentage or a weekly fee leaves behind." },
+    ],
   },
   {
     slug: "load-boards",
@@ -38,6 +41,9 @@ export default [
       "Guides on this shelf stay with official, current plan pages for pricing and feature lists, because those change. The published comparison explains how to use each board as a new dispatcher, not which logo to treat as a trophy.",
     ],
     soon: [],
+    tools: [
+      { href: "/tools/true-rate-per-mile/", name: "True rate per mile calculator", note: "Add deadhead to the posted rate before you book." },
+    ],
   },
   {
     slug: "factoring",
@@ -56,6 +62,9 @@ export default [
       "Start with the difference between recourse and non-recourse factoring. Then read the exceptions. Many non-recourse agreements still return the invoice to the carrier when the dispute is about the load, the paperwork, or a short pay, not only when a broker fails as a credit risk.",
     ],
     soon: [],
+    tools: [
+      { href: "/tools/factoring-cost/", name: "Factoring cost calculator", note: "Estimate the advance today and the settlement later." },
+    ],
   },
   {
     slug: "software",
@@ -97,6 +106,34 @@ export default [
       "Hotshot vs dry van dispatch",
       "Insurance checklist when hiring a dispatcher",
       "ELD options for new authority",
+    ],
+    tools: [
+      { href: "/tools/true-rate-per-mile/", name: "True rate per mile calculator", note: "What a load pays after the empty miles." },
+      { href: "/tools/dispatch-fee/", name: "Dispatch fee calculator", note: "Compare a percentage fee with a flat weekly rate." },
+      { href: "/tools/factoring-cost/", name: "Factoring cost calculator", note: "Advance, fee, and reserve on an invoice." },
+    ],
+  },
+  {
+    slug: "compliance",
+    name: "Compliance",
+    number: "06",
+    summary: "Hours of service, IFTA due dates, and the filings a small carrier cannot miss.",
+    description:
+      "Compliance guides for U.S. dispatchers and owner-operators: hours of service when booking a load, IFTA quarterly due dates, and the related filings that keep a small authority in good standing.",
+    dek: "The clocks and calendars that sit behind a booked load: hours of service for the driver, and the fuel-tax and filing dates for the carrier.",
+    image: "/assets/images/shelf-compliance",
+    width: 1600,
+    height: 900,
+    alt: "An aerial view of a highway weigh station beside an interstate, the kind of roadside checkpoint that sits behind hours-of-service and tax rules",
+    caption: "Photo by Wikideas1, via Wikimedia Commons, CC0.",
+    paragraphs: [
+      "A rate confirmation is only useful if the driver can legally run the trip, and a new authority only stays open if the quarterly and annual filings are made on time. This shelf covers those constraints in plain English, with official sources for the underlying rules.",
+      "Start with hours of service as a booking problem for dispatchers, and with the IFTA due-date calendar for owner-operators and small fleets. Later guides will cover how to file an IFTA return, Form 2290, and UCR. This is general information, not legal, tax, or compliance advice.",
+    ],
+    soon: [
+      "How to file IFTA quarterly",
+      "Form 2290 due dates",
+      "UCR filing for small carriers",
     ],
   },
 ];

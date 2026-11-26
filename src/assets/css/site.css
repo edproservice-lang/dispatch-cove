@@ -817,3 +817,197 @@ h3.recommend-title {
   body { background: #fff; }
   a { text-decoration: underline; }
 }
+
+/* More nav items: Compliance and Tools */
+@media (min-width: 1120px) {
+  .nav { display: none; }
+  .nav-toggle { display: inline-flex; }
+}
+@media (min-width: 1280px) {
+  .nav-toggle { display: none; }
+  .mast-inner { position: relative; }
+  .nav {
+    display: flex;
+    position: static;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    gap: 0.55rem;
+    align-items: center;
+  }
+  .nav a {
+    border: 0;
+    padding: 0.25rem 0;
+    font-size: 0.82rem;
+  }
+}
+
+@media (min-width: 1040px) {
+  .shelf { grid-template-columns: repeat(3, 1fr); }
+}
+
+.tool-grid {
+  display: grid;
+  gap: 1rem;
+}
+@media (min-width: 800px) {
+  .tool-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+.tool-card, .tool-link-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.15rem 1.2rem 1.25rem;
+  text-decoration: none;
+  color: inherit;
+  box-shadow: var(--shadow);
+}
+.tool-card:hover, .tool-link-card:hover {
+  border-color: var(--line-strong);
+  color: inherit;
+}
+.tool-card h2, .tool-card h3, .tool-link-card h3 {
+  margin: 0.15rem 0 0.4rem;
+  font-size: 1.45rem;
+}
+.tool-card p, .tool-link-card p { margin: 0; color: var(--muted); }
+.tool-card .kicker, .tool-link-card .kicker { margin-bottom: 0.2rem; }
+
+.calculator {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.15rem 1.15rem 1.3rem;
+  margin: 0 0 2rem;
+}
+.calculator-panel {
+  display: grid;
+  gap: 0.9rem;
+}
+@media (min-width: 720px) {
+  .calculator-panel { grid-template-columns: 1fr 1fr; gap: 1rem 1.2rem; }
+}
+.calculator-panel .field-span { grid-column: 1 / -1; }
+.calculator label, .choice-group > p {
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+}
+.calculator input[type="number"] {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.7rem;
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 1.05rem;
+  padding: 0.55rem 0.8rem;
+}
+.calculator input[type="number"]:focus {
+  outline: 2px solid var(--clay);
+  outline-offset: 2px;
+  border-color: transparent;
+}
+.field-hint {
+  margin: 0.3rem 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1rem;
+}
+.choice-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 400;
+  margin: 0;
+  min-height: 44px;
+}
+.choice-row input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--moss);
+}
+.calculator-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  align-items: center;
+}
+.calculator .btn {
+  margin: 0;
+  border: 0;
+  cursor: pointer;
+}
+.calculator-result {
+  grid-column: 1 / -1;
+  background: var(--moss-soft);
+  border-radius: 0.9rem;
+  padding: 0.95rem 1rem;
+}
+.calculator-result[data-state="error"] {
+  background: #f8efe8;
+}
+.calculator-result[hidden] { display: none; }
+.calculator-result h3 {
+  margin: 0 0 0.55rem;
+  font-size: 1.15rem;
+}
+.result-grid {
+  display: grid;
+  gap: 0.55rem 1rem;
+}
+@media (min-width: 640px) {
+  .result-grid { grid-template-columns: 1fr 1fr; }
+}
+.result-grid div p:first-child {
+  margin: 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-family: var(--sans);
+}
+.result-grid strong {
+  display: block;
+  font-size: 1.15rem;
+  font-family: var(--display);
+  font-weight: 600;
+}
+.calculator-error { margin: 0; color: #8a2b0e; }
+.calculator-note, .estimate-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+.tool-layout {
+  display: grid;
+  gap: 0.5rem;
+}
+@media (min-width: 1040px) {
+  .tool-layout {
+    grid-template-columns: minmax(0, 1fr) 16rem;
+    column-gap: 2.5rem;
+  }
+  .tool-layout .calculator,
+  .tool-layout .prose,
+  .tool-layout .faq { grid-column: 1; }
+  .tool-layout .toc {
+    grid-column: 2;
+    grid-row: 1 / span 8;
+    position: sticky;
+    top: 6rem;
+    align-self: start;
+  }
+}

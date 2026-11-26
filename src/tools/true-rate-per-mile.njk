@@ -1,0 +1,109 @@
+---
+layout: layouts/tool.njk
+title: True rate per mile calculator
+metaTitle: True rate per mile calculator · Dispatch Cove
+description: Calculate a truck load’s true rate per mile after deadhead. Enter pay, loaded miles, and empty miles. Example figures only, not a market average.
+dek: "The posted rate is usually pay divided by the loaded miles. Add the empty miles to the pickup, and the per-mile number often drops."
+date: 2026-11-26
+updated: 2026-11-26
+permalink: /tools/true-rate-per-mile/
+toc:
+  - id: calculator
+    label: The calculator
+  - id: how-the-math-works
+    label: How the math works
+  - id: what-this-number-does-not-include
+    label: What it leaves out
+related:
+  - href: /load-boards/dat-vs-truckstop-for-a-new-dispatcher/
+    title: DAT vs Truckstop for a new dispatcher
+    note: Where posted rates and rate tools come from.
+  - href: /load-boards/
+    title: Load Boards
+    note: The shelf for DAT, Truckstop, and a new dispatcher’s workflow.
+  - href: /getting-started/how-to-become-a-truck-dispatcher-with-no-experience/
+    title: How to become a truck dispatcher with no experience
+    note: Why a beautiful rate can still be a poor load.
+  - href: /tools/
+    title: All calculators
+    note: Dispatch fee and factoring cost are on the same shelf.
+faq:
+  - q: What is a true rate per mile?
+    a: It is the load pay divided by all the miles the truck has to run for that trip, including empty miles to the pickup or between stops. The loaded rate ignores those empty miles.
+  - q: Should I include the fuel surcharge in the pay?
+    a: Use the same money you will actually invoice or collect for the trip. If the confirmation shows a linehaul plus a fuel surcharge, adding both is usually the honest comparison. If you only want a linehaul rate, leave the surcharge out and be consistent from load to load.
+  - q: Are the starting numbers average rates?
+    a: No. They are example figures so the calculator has something to show when the page opens. They are not a market average, a DAT or Truckstop rate, or a recommendation.
+  - q: Does this tell me whether a load is profitable?
+    a: No. Profit also depends on fuel, tolls, maintenance, the driver’s hours, and your cost per mile. This page only compares pay with miles.
+---
+<div class="calculator" id="calculator" data-calculator="true-rate-per-mile" role="group" aria-labelledby="calculator-title">
+  <h2 id="calculator-title">The calculator</h2>
+  <p class="field-hint">The starting numbers are examples, not averages or a recommended rate.</p>
+  <div class="calculator-panel">
+    <div>
+      <label for="rpm-pay">Load pay (dollars)</label>
+      <input id="rpm-pay" type="number" inputmode="decimal" min="0" step="0.01" value="2500">
+      <p class="field-hint">Example: 2,500. Use the total you will collect for the trip, or linehaul only, but be consistent.</p>
+    </div>
+    <div>
+      <label for="rpm-loaded">Loaded miles</label>
+      <input id="rpm-loaded" type="number" inputmode="decimal" min="0" step="1" value="800">
+      <p class="field-hint">Example: 800 miles from pickup to delivery.</p>
+    </div>
+    <div>
+      <label for="rpm-deadhead">Deadhead miles</label>
+      <input id="rpm-deadhead" type="number" inputmode="decimal" min="0" step="1" value="120">
+      <p class="field-hint">Example: 120 empty miles to the pickup. Use 0 if the truck is already there.</p>
+    </div>
+    <div class="calculator-actions">
+      <button class="btn" type="button" data-calculate>Calculate</button>
+    </div>
+    <div class="calculator-result" data-result aria-live="polite">
+      <h3>Estimate</h3>
+      <p class="calculator-error" data-error></p>
+      <div class="result-grid">
+        <div>
+          <p>Loaded rate</p>
+          <strong data-loaded-rpm></strong>
+        </div>
+        <div>
+          <p>True rate, including deadhead</p>
+          <strong data-true-rpm></strong>
+        </div>
+        <div>
+          <p>Trip miles</p>
+          <strong data-total-miles></strong>
+        </div>
+        <div>
+          <p>Empty share</p>
+          <strong data-deadhead-share></strong>
+        </div>
+      </div>
+      <p class="calculator-note">This is an estimate from the numbers you entered. It is not a quote and not a statement of what the market is paying.</p>
+    </div>
+  </div>
+</div>
+
+<article class="prose">
+  <h2 id="how-the-math-works">How the math works</h2>
+  <p>A load board often shows a rate per mile based on the loaded distance. If a trip pays $2,500 for 800 loaded miles, that loaded rate is $3.125 a mile. If the truck still has to run 120 empty miles to the pickup, the trip is 920 miles. The true rate is $2,500 divided by 920, or about $2.72 a mile.</p>
+  <p>Those dollar figures are the same examples used in the calculator above. Change them to the confirmation in front of you. The useful comparison is always the same: pay divided by every mile the truck must run for that load.</p>
+  <p>A dispatcher who only quotes the loaded rate can book a load that looks strong and still leave the truck under water once the empty miles, the fuel, and the hours are counted. For how those rates appear on the two boards a new desk meets first, see <a href="/load-boards/dat-vs-truckstop-for-a-new-dispatcher/">DAT vs Truckstop for a new dispatcher</a>.</p>
+
+  <h2 id="what-this-number-does-not-include">What this number does not include</h2>
+  <p>True rate per mile is not profit. It does not subtract fuel, tolls, lumper fees, or the time spent at a dock. It also does not tell you whether the driver has the hours to run the trip legally. For that planning, start with <a href="/compliance/hours-of-service-for-dispatchers/">hours of service for dispatchers</a>.</p>
+  <p>If you want to see what a dispatch percentage would take off the same load, use the <a href="/tools/dispatch-fee/">dispatch fee calculator</a>. If the invoice will be factored, use the <a href="/tools/factoring-cost/">factoring cost calculator</a>.</p>
+</article>
+
+{% if faq %}
+<section class="faq" aria-labelledby="faq-title">
+  <h2 id="faq-title">Questions people actually ask</h2>
+  {% for item in faq %}
+  <details>
+    <summary>{{ item.q }}</summary>
+    <p>{{ item.a }}</p>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}

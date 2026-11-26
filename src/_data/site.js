@@ -6,7 +6,7 @@ export default {
   ga: "G-ETMZ0D8TEG",
   locale: "en_US",
   description:
-    "Practical guides for U.S. truck dispatchers and owner-operators: load boards, freight factoring, dispatch software, and starting a dispatch business.",
+    "Practical guides for U.S. truck dispatchers and owner-operators: load boards, freight factoring, dispatch software, compliance, and starting a dispatch business.",
   googleSiteVerification: "",
   msValidate: "",
 };
