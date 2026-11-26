@@ -14,7 +14,7 @@ const SRC = join(ROOT, "src");
 const QUEUE = join(import.meta.dirname, "queue.json");
 const SUMMARY = join(import.meta.dirname, "..", "..", "autowriter-summary.md");
 const KEY = (process.env.GEMINI_API_KEY || "").trim();
-const MODELS = (process.env.GEMINI_MODELS || "gemini-3.8-flash,gemini-3.5-flash,gemini-3.7-flash,gemini-flash-latest").split(",").map((s) => s.trim()).filter(Boolean);
+const MODELS = (process.env.GEMINI_MODELS || "gemini-3.5-flash-lite,gemini-3.8-flash,gemini-3.5-flash,gemini-3.7-flash,gemini-flash-latest").split(",").map((s) => s.trim()).filter(Boolean);
 const LITE = (process.env.GEMINI_LITE_MODELS || "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash").split(",").map((x) => x.trim()).filter(Boolean);
 const COUNT = Number(process.argv[2] || process.env.ARTICLES || 1);
 const GROQ_KEY = (process.env.GROQ_API_KEY || "").trim();
@@ -72,6 +72,40 @@ const guides = () => walk(SRC).filter((f) => f.endsWith(".md")).map(readGuide).f
 const productsMod = await import(join(SRC, "_data", "products.js") + `?t=${Date.now()}`);
 const PRODUCTS = productsMod.default;
 const silos = (await import(join(SRC, "_data", "silos.js"))).default;
+const toolItems = (await import(join(SRC, "_data", "tools.js"))).default;
+
+function linkablePages() {
+  const pages = guides();
+  const seen = new Set(pages.map((g) => g.url));
+  const add = (url, title, description) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    pages.push({ url, data: { title, description }, file: "" });
+  };
+  add("/tools/", "Free trucking calculators", "True rate per mile, dispatch fee, and factoring cost calculators.");
+  for (const tool of toolItems) {
+    add(`/tools/${tool.slug}/`, `${tool.name} calculator`, tool.description || tool.short || "");
+  }
+  for (const shelf of silos) {
+    add(`/${shelf.slug}/`, `${shelf.name} guides`, shelf.summary || shelf.description || "");
+  }
+  return pages;
+}
+
+function suggestedTools(item) {
+  const hay = `${item.topic || ""} ${item.keyword || ""} ${item.slug || ""} ${item.id || ""}`.toLowerCase();
+  const out = [];
+  if (/rate per mile|deadhead|negotiat(?:e|ing) (?:freight )?rates|cost per mile|true rate/.test(hay)) {
+    out.push("/tools/true-rate-per-mile/");
+  }
+  if (/dispatch fee|how much do truck dispatchers charge|how dispatch services charge|percentage vs flat|flat-fee dispatcher|dispatch and factoring fees/.test(hay)) {
+    out.push("/tools/dispatch-fee/");
+  }
+  if (/factoring|notice of assignment|short pay|recourse/.test(hay)) {
+    out.push("/tools/factoring-cost/");
+  }
+  return [...new Set(out)];
+}
 
 // ---------- LLM writers (Gemini primary, Groq fallback) ----------
 let GEMINI_DEAD = "";
@@ -357,6 +391,22 @@ function untestedHits(text) {
   }
   return [...new Set(hits)];
 }
+const ADVICE_CLAIMS = [
+  /\bthis (?:guide|article|page) (?:is|provides|constitutes|gives) (?:legal|tax|insurance|financial) advice\b/i,
+  /\b(?:legal|tax|insurance|financial) advice (?:on|about|for|to)\b/i,
+];
+function adviceHits(text) {
+  const hits = [];
+  for (const re of ADVICE_CLAIMS) {
+    const g = new RegExp(re.source, "gi");
+    for (const m of text.matchAll(g)) {
+      const before = text.slice(Math.max(0, m.index - 40), m.index).toLowerCase();
+      if (/\b(not|never|no|n't)\b/.test(before)) continue;
+      hits.push(m[0]);
+    }
+  }
+  return [...new Set(hits)];
+}
 // Seller-benefit hedges. Care-instruction conditionals ("if the maker says so") and
 // pointers to current price/terms/care on the seller's page are allowed.
 const SELLER_HEDGES = [
@@ -520,6 +570,13 @@ function checkArticle(a, ctx) {
   if (hits.length) errs.push(`remove these claims (no tests, ratings, testimonials or medical claims): ${hits.join("; ")}`);
   const untested = untestedHits(hay);
   if (untested.length) errs.push(`do not say or imply we did not test or use the product (remove: ${untested.join("; ")})`);
+  const advice = adviceHits(hay);
+  if (advice.length) errs.push(`do not claim to give legal, tax, insurance, or financial advice (remove: ${advice.join("; ")}); this is general information`);
+  if (Array.isArray(ctx.suggestedTools) && ctx.suggestedTools.length) {
+    const have = new Set(targets);
+    const missing = ctx.suggestedTools.filter((url) => !have.has(url));
+    if (missing.length) errs.push(`on-topic calculator(s) must be linked inside a sentence: ${missing.join(", ")}`);
+  }
   const hedges = sellerHedgeHits(hay);
   if (hedges.length) errs.push(`state product benefits confidently as what the product is designed to do; do not hedge with seller-attribution phrases (remove: ${hedges.join("; ")})`);
   if (ENABLE_STORIES && (!Array.isArray(a.story) || a.story.length !== 7)) errs.push("story must have exactly 7 cards");
@@ -535,6 +592,10 @@ function checkArticle(a, ctx) {
 function buildPrompt(item, existing, feedback) {
   const product = item.product ? PRODUCTS[item.product] : null;
   const list = existing.map((g) => `- ${g.url} | ${g.data.title} | ${g.data.description}`).join("\n");
+  const requiredTools = suggestedTools(item);
+  const toolNudge = requiredTools.length
+    ? `This topic MUST include an in-sentence Markdown link to each of these calculators: ${requiredTools.join(", ")}.`
+    : "If a calculator in the list is clearly on-topic (true rate per mile or deadhead, dispatch fees, or factoring cost), link it inside a sentence.";
   const productBlock = product ? `
 PRODUCT FOR THIS ARTICLE (the only facts you may state about it; do NOT invent a price, spec, size, rating, or review):
 key: ${item.product}
@@ -567,11 +628,13 @@ HARD RULES
 2. Never claim we tested, tried, used, measured, or reviewed anything. Also never state or imply that we did not test or use a product. Do not write phrases such as "we haven't tested", "we have not used", "we did not use", "not hands-on", "this desk has not tested", or "not a test by Dispatch Cove." No testimonials, quotes from customers, review counts, star ratings, or invented statistics. No medical or health claims. No prices or specs unless given above. Attribute official publications (.gov, .edu, or a care/manual page) clearly. For the featured product, state the given benefits confidently as what the product is designed to do or does (for example, "Summar Shield is designed to protect approved invoices when a broker fails to pay," not "according to the seller, Summar Shield..."). Never write hedging phrases such as "according to the seller," "the manufacturer says," "the brand claims," "per the product page," "per the seller," "per the maker," "the seller says," "the seller presents," or "is marketed as." You may still point readers to the current offer, price, or care instructions on the seller's page.
 2b. PRODUCT SALES SECTION: when a product is provided, the "Where X fits" section (or equivalent) and any paragraph that sells the product must be benefits-only and should persuade the reader to look at the offer. Write those benefits as facts about what the product is designed to do, not as attributed claims. Never mention cons, trade-offs, drawbacks, or what the product cannot do in that section.
 2c. PROS AND AUDIENCE: do not undercut the product in "## Pros and cons" or the audience section either. Lead with strong benefits. Turn any limitations into gentle, constructive "good to know" / "best results when" tips (usage, care, or fit). Frame the audience as "who it's ideal for," not "who should skip it." Stay honest: no false claims, no medical claims, no fake testimonials, and never say or imply that we did not test or use the product.
-3. INTERNAL LINKS: put 3-6 links to DIFFERENT existing articles from the list below INSIDE normal sentences, as Markdown links [descriptive anchor](/path/). Anchors are 2-6 natural words describing the target topic (vary them; never "click here"/"this guide"). Each target at most once. Never inside headings. Only use URLs from this list:
+3. INTERNAL LINKS: put 3-6 links to DIFFERENT existing pages from the list below INSIDE normal sentences, as Markdown links [descriptive anchor](/path/). Anchors are 2-6 natural words describing the target topic (vary them; never "click here"/"this guide"). Each target at most once. Never inside headings. Only use URLs from this list:
 ${list}
+${toolNudge} Calculator pages live under /tools/ and count toward the 3-6 internal links. Prefer a relevant calculator and a guide in the same silo when both fit naturally.
 4. EXTERNAL SOURCES: cite 2-3 real, neutral authority pages (US .gov, .edu extension services, or an official manufacturer care/manual page) that you are confident exist at that exact URL; link each once inside a sentence in the body and list it in "sources". Also add 2 extra backup candidates at the end of "sources" with "inline": false (prefer stable official pages like fmcsa.dot.gov, transportation.gov, or the official product or agency page that is certain to exist). Mark the linked ones "inline": true. Never link to stores, Amazon, marketplaces, or blogs/roundups with affiliate links.
 5. FAQ: 4-6 real questions people search, answers 2-4 sentences.
 5b. STYLE: US spelling (color, not colour). Named agencies, load boards, and official tools are fine when they are the subject. Do not invent brands. Do not copy the product facts word for word; paraphrase briefly and let the product box carry the details. Only attribute a claim to a source if that page is specifically about it; otherwise state general advice without attribution. Internal links must read naturally: if a target is only loosely related, write a short bridging sentence that gives the reader a real reason to click.
+5c. ADVICE: this is general information, not legal, tax, insurance, or financial advice. Do not claim the guide is advice of that kind, and do not invent deadlines, tax rates, penalties, coverage outcomes, or case results. When you mention rules or filings, point readers to the official source and, if a decision is at stake, to a qualified professional or their base jurisdiction.
 6. "related": choose the 3 most related existing articles (href from the list) with a one-sentence note on why.
 7. Mid-article photo: do not put any image, figure, or HTML in the body (the publisher inserts one photo later). Set "midImageSection" to the exact H2 text of a practical how-to section near the middle (not "The short answer", not pros/cons, not "who it's ideal for" or "who it is for"). Set "midImageQuery" to a 2-4 word stock-photo search for a real scene that illustrates that section (no brand names, no text in the scene). Set "midImageAlt" to one descriptive sentence for that photo that naturally includes the target keyword.
 
@@ -1062,7 +1125,7 @@ async function draftPassing(item, existing, feedback, provider) {
   log(`drafting with ${provider}`);
   let a = await draft(item, existing, feedback, provider);
   a = autoFix(a, { product: item.product, existing });
-  let errs = checkArticle(a, { product: item.product, existing });
+  let errs = checkArticle(a, { product: item.product, existing, suggestedTools: suggestedTools(item) });
   if (!a.sources.length) a.sources = await rescueSources(a);
   if (!a.sources.length) errs.push("none of your source URLs returned HTTP 200; give real, stable .gov/.edu/manufacturer URLs");
   if (errs.length) {
@@ -1070,7 +1133,7 @@ async function draftPassing(item, existing, feedback, provider) {
     try {
       a = await repairDraft(a, errs, item, existing, provider);
       a = autoFix(a, { product: item.product, existing });
-      errs = checkArticle(a, { product: item.product, existing });
+      errs = checkArticle(a, { product: item.product, existing, suggestedTools: suggestedTools(item) });
       if (!a.sources.length) a.sources = await rescueSources(a);
       if (!a.sources.length) errs.push("no verified sources");
     } catch (e) {
@@ -1081,7 +1144,7 @@ async function draftPassing(item, existing, feedback, provider) {
     log(`repair still has issues (${provider}): ${errs.join(" | ")}; doing a full redraft`);
     a = await draft(item, existing, errs, provider);
     a = autoFix(a, { product: item.product, existing });
-    errs = checkArticle(a, { product: item.product, existing });
+    errs = checkArticle(a, { product: item.product, existing, suggestedTools: suggestedTools(item) });
     if (!a.sources.length) a.sources = await rescueSources(a);
     if (!a.sources.length) errs.push("no verified sources");
     if (errs.length) throw new Error(`draft 2 still fails (${provider}): ${errs.join(" | ")}`);
@@ -1136,7 +1199,7 @@ async function writeArticle(item, existing) {
     if (c && !taken.has(c.url)) { chosen[s.key] = c; taken.add(c.url); }
   }
   const silo = silos.find((x) => x.slug === item.silo);
-  const fallbacks = [silo?.image, "/assets/images/hero-home", "/assets/images/shelf-getting-started", "/assets/images/shelf-load-boards", "/assets/images/shelf-software", "/assets/images/shelf-owner-operators"].filter(Boolean)
+  const fallbacks = [silo?.image, "/assets/images/hero-home", "/assets/images/shelf-getting-started", "/assets/images/shelf-load-boards", "/assets/images/shelf-factoring", "/assets/images/shelf-software", "/assets/images/shelf-owner-operators", "/assets/images/shelf-compliance"].filter(Boolean)
     .map((b) => srcAsset(b, "-1600.webp")).filter((f, i, arr) => arr.indexOf(f) === i && existsSync(f));
   const unusedFallbacks = [];
   let fb = 0;
@@ -1379,8 +1442,9 @@ for (const item of queue.items) {
   for (let attempt = 0; attempt < 2 && !ok && !fatalStop; attempt++) {
     try {
       const existing = guides();
+      const linkable = linkablePages();
       if (attemptNote) item._buildError = attemptNote;
-      const r = await writeArticle(item, existing);
+      const r = await writeArticle(item, linkable);
       const backs = await addBacklinks(r.url, r.a, existing);
       removeSoon(item.topic);
       const err = build();
@@ -1405,7 +1469,7 @@ for (const item of queue.items) {
   if (!ok) results.push({ failed: item.id, topic: item.topic, reason: String(attemptNote).slice(0, 300) });
 }
 
-const lines = [`## Autowriter run ${TODAY}`, "", "Drafts written with Gemini (primary) or Groq (fallback). **Review and edit before merging.** Nothing here is merged automatically.", "",
+const lines = [`## Autowriter run ${TODAY}`, "", "Articles written with Gemini (primary) or Groq (fallback) and published to main. IndexNow runs on that push.", "",
   "| Article | Words | In-text internal links | Backlinks added | Verified sources | Provider | Model |", "|---|---|---|---|---|---|---|"];
 for (const r of results.filter((x) => !x.failed)) {
   lines.push(`| [${r.a.title}](https://dispatchcove.com${r.url}) (\`${r.file.slice(ROOT.length + 1)}\`) | ${r.wc} | ${r.internal} | ${r.backs.length} | ${r.sources} | ${r.provider} | ${r.model} |`);
@@ -1415,7 +1479,7 @@ const imgLines = results.filter((r) => r.images).map((r) => `- ${r.a.title}: ${r
 if (imgLines.length) lines.push("", "### Images", ...imgLines);
 const backs = results.flatMap((r) => (r.backs || []).map((b) => `- ${b.file}: linked “${b.phrase}” → ${r.url}`));
 if (backs.length) lines.push("", "### Backlinks inserted in older articles", ...backs);
-lines.push("", "Checklist: read for accuracy, confirm no invented specs or prices, then merge.");
+lines.push("", "Checklist: confirm no invented specs, prices, or legal/tax-advice claims. The article is already committed for publish.");
 writeFileSync(SUMMARY, lines.join("\n") + "\n");
 if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `made=${made}\n`);
 log(`made ${made} article(s)`);

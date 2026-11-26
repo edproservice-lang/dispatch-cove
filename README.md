@@ -12,4 +12,4 @@ npm run dev
 
 The `{% product "id" %}` shortcode renders the offer box. When a live affiliate URL is present, the photo and button use `rel="sponsored nofollow noopener"` and `target="_blank"`. A short commission note is inserted before the first offer link. Do not invent tests, statistics, or testimonials, and do not write that a product was or was not tested.
 
-The autowriter at `scripts/autowriter/` is ready to draft later queue items, but the daily GitHub Action is not enabled yet.
+The autowriter at `scripts/autowriter/` publishes two guides a day via `.github/workflows/daily-articles.yml` (09:17 America/Fortaleza). Gemini is the primary writer; Groq is the fallback.

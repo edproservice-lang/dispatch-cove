@@ -1,0 +1,73 @@
+name: Daily articles (autowriter)
+
+on:
+  schedule:
+    # 12:17 UTC = 09:17 America/Fortaleza, every day
+    - cron: "17 12 * * *"
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "How many articles to write (blank = 2)"
+        required: false
+        default: ""
+      force_provider:
+        description: "Force a writer: gemini, groq, or blank for Gemini then Groq fallback"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: autowriter
+  cancel-in-progress: false
+
+jobs:
+  write:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: |
+          npm ci --no-audit --no-fund
+          npm i --no-save --no-audit --no-fund sharp@0.34 js-yaml@4
+
+      - name: Git identity
+        run: |
+          git config user.name "edproservice-lang"
+          git config user.email "edproservice@gmail.com"
+
+      - name: Write articles
+        id: write
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODELS: ${{ vars.GEMINI_MODELS }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODELS: ${{ vars.GROQ_MODELS }}
+          FORCE_PROVIDER: ${{ github.event.inputs.force_provider }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          ARTICLES: ${{ github.event.inputs.count || vars.ARTICLES_PER_DAY || '2' }}
+        run: |
+          [ -n "$GEMINI_MODELS" ] || unset GEMINI_MODELS
+          [ -n "$GROQ_MODELS" ] || unset GROQ_MODELS
+          [ -n "$FORCE_PROVIDER" ] || unset FORCE_PROVIDER
+          node scripts/autowriter/write.mjs "$ARTICLES"
+
+      - name: Publish to main
+        if: steps.write.outputs.made != '0'
+        run: |
+          git pull --rebase --autostash origin main
+          git push origin HEAD:main
+
+      - name: Job summary
+        if: always()
+        run: '[ -f autowriter-summary.md ] && cat autowriter-summary.md >> "$GITHUB_STEP_SUMMARY" || true'
