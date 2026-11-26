@@ -1,0 +1,1421 @@
+// Dispatch Cove autowriter: writes N guides with Gemini (primary) and Groq (fallback). Web Stories are disabled.
+// Usage: GEMINI_API_KEY=... GROQ_API_KEY=... node scripts/autowriter/write.mjs [count]
+// FORCE_PROVIDER=groq|gemini skips the other writer (for tests).
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, appendFileSync, mkdtempSync, rmSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { execSync, execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import yaml from "js-yaml";
+import sharp from "sharp";
+
+const ROOT = join(import.meta.dirname, "..", "..");
+const SRC = join(ROOT, "src");
+const QUEUE = join(import.meta.dirname, "queue.json");
+const SUMMARY = join(import.meta.dirname, "..", "..", "autowriter-summary.md");
+const KEY = (process.env.GEMINI_API_KEY || "").trim();
+const MODELS = (process.env.GEMINI_MODELS || "gemini-3.8-flash,gemini-3.5-flash,gemini-3.7-flash,gemini-flash-latest").split(",").map((s) => s.trim()).filter(Boolean);
+const LITE = (process.env.GEMINI_LITE_MODELS || "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash").split(",").map((x) => x.trim()).filter(Boolean);
+const COUNT = Number(process.argv[2] || process.env.ARTICLES || 1);
+const GROQ_KEY = (process.env.GROQ_API_KEY || "").trim();
+const GROQ_MODELS = (process.env.GROQ_MODELS || "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b").split(",").map((s) => s.trim()).filter(Boolean);
+const FORCE_PROVIDER = (process.env.FORCE_PROVIDER || "").trim().toLowerCase();
+// Free-tier gpt-oss models: 8K TPM / 200K TPD. One long article draft can fill a minute.
+const GROQ_TPM = Math.max(1000, Number(process.env.GROQ_TPM || 8000) || 8000);
+const GROQ_RATE_BUDGET_MS = Math.max(30_000, Number(process.env.GROQ_RATE_BUDGET_MS || 180_000) || 180_000);
+const UA = "DispatchCoveBot/1.0 (+https://dispatchcove.com/contact/)";
+const ENABLE_STORIES = false;
+const TEST_PIXABAY = process.argv[2] === "--test-pixabay";
+function loadPixabayKey() {
+  const fromEnv = (process.env.PIXABAY_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  if (TEST_PIXABAY) {
+    const p = join(process.env.HOME || "", ".secrets", "pixabay_api_key");
+    if (existsSync(p)) return readFileSync(p, "utf8").trim();
+  }
+  return "";
+}
+const PIXABAY = loadPixabayKey();
+const PEXELS = (process.env.PEXELS_API_KEY || "").trim(); // dormant; Pexels paused new API keys
+const TODAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Fortaleza" }).format(new Date());
+const AFFIL_HOSTS = ["clickrtrckr.com", "clickomundo.com", "treejammer.com", "tricklyn.com"];
+
+if (!TEST_PIXABAY) {
+  if (FORCE_PROVIDER === "groq" && !GROQ_KEY) { console.error("GROQ_API_KEY is missing"); process.exit(1); }
+  else if (FORCE_PROVIDER === "gemini" && !KEY) { console.error("GEMINI_API_KEY is missing"); process.exit(1); }
+  else if (!FORCE_PROVIDER && !KEY && !GROQ_KEY) { console.error("GEMINI_API_KEY is missing (and no GROQ_API_KEY fallback)"); process.exit(1); }
+}
+const T0 = Date.now();
+const log = (...a) => console.log(`[autowriter +${Math.round((Date.now() - T0) / 1000)}s]`, ...a);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sh = (cmd) => execSync(cmd, { cwd: ROOT, stdio: "pipe", encoding: "utf8", maxBuffer: 64 << 20 });
+
+function slugify(value) {
+  return String(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/&/g, " and ").replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// ---------- site inventory ----------
+function walk(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? (e.name.startsWith("_") || e.name === "assets" ? [] : walk(join(dir, e.name))) : [join(dir, e.name)]);
+}
+function readGuide(file) {
+  const raw = readFileSync(file, "utf8");
+  const m = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!m) return null;
+  const data = yaml.load(m[1]);
+  if (!data || data.tags !== "guide") return null;
+  return { file, raw, fm: m[1], body: m[2], data, url: data.permalink };
+}
+const guides = () => walk(SRC).filter((f) => f.endsWith(".md")).map(readGuide).filter(Boolean);
+const productsMod = await import(join(SRC, "_data", "products.js") + `?t=${Date.now()}`);
+const PRODUCTS = productsMod.default;
+const silos = (await import(join(SRC, "_data", "silos.js"))).default;
+
+// ---------- LLM writers (Gemini primary, Groq fallback) ----------
+let GEMINI_DEAD = "";
+let GROQ_DEAD = "";
+let OVERLOAD_HITS = 0;
+let GROQ_OVERLOAD_HITS = 0;
+let groqLastTokens = 0;
+let groqLastAt = 0;
+let groqRateWaitMs = 0;
+async function groqCooldown() {
+  if (!groqLastTokens || !groqLastAt) return;
+  const minInterval = Math.ceil((groqLastTokens / GROQ_TPM) * 60_000) + 1500;
+  const wait = minInterval - (Date.now() - groqLastAt);
+  if (wait > 500) {
+    log(`groq cooldown ${Math.round(wait / 1000)}s to stay under ${GROQ_TPM} TPM (last call ~${groqLastTokens} tokens)`);
+    await sleep(Math.min(wait, 90_000));
+  }
+}
+function rememberGroqUsage(data, textLen) {
+  const used = Number(data?.usage?.total_tokens) || Math.max(500, Math.ceil((textLen || 0) / 3) + 1500);
+  groqLastTokens = used;
+  groqLastAt = Date.now();
+  GROQ_OVERLOAD_HITS = 0;
+}
+function killGroq(reason) {
+  GROQ_DEAD = reason;
+  return Object.assign(new Error("Groq unavailable: " + reason), { fatal: FORCE_PROVIDER === "groq" || !KEY });
+}
+function canUseGroq() { return Boolean(GROQ_KEY) && !GROQ_DEAD && FORCE_PROVIDER !== "gemini"; }
+function writerProviders() {
+  if (FORCE_PROVIDER === "groq") return GROQ_KEY ? ["groq"] : [];
+  if (FORCE_PROVIDER === "gemini") return KEY ? ["gemini"] : [];
+  const list = [];
+  if (KEY && !GEMINI_DEAD) list.push("gemini");
+  if (GROQ_KEY && !GROQ_DEAD) list.push("groq");
+  return list;
+}
+async function gemini(prompt, { json = true, temperature = 0.8, models = MODELS, parts = [] } = {}) {
+  // curl instead of fetch: Node's fetch drops responses that take >5 min to start.
+  const tmp = mkdtempSync(join(tmpdir(), "aw-"));
+  const hdr = join(tmp, "h"), req = join(tmp, "req.json");
+  writeFileSync(hdr, `x-goog-api-key: ${KEY}\nContent-Type: application/json\n`, { mode: 0o600 });
+  writeFileSync(req, JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: prompt }, ...parts] }],
+    generationConfig: { temperature, maxOutputTokens: 32000, ...(json ? { responseMimeType: "application/json" } : {}) },
+  }));
+  let lastErr = "";
+  if (GEMINI_DEAD) throw Object.assign(new Error("Gemini unavailable (stopped earlier this run): " + GEMINI_DEAD), { fatal: !canUseGroq() });
+  try {
+    for (const model of models) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let raw = "", code = 0;
+        try {
+          raw = execFileSync("curl", ["-sS", "-m", "600", "-H", `@${hdr}`, "--data-binary", `@${req}`, "-w", "\n%{http_code}",
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`], { encoding: "utf8", maxBuffer: 64 << 20 });
+          const cut = raw.lastIndexOf("\n");
+          code = Number(raw.slice(cut + 1)); raw = raw.slice(0, cut);
+        } catch (e) { lastErr = `${model} curl failed (${String(e.message).split("\n")[0].slice(0, 120)})`; log(lastErr); continue; }
+        let data = {};
+        try { data = JSON.parse(raw); } catch {}
+        if (code !== 200) {
+          lastErr = `${model} HTTP ${code} ${data?.error?.status || ""}`;
+          log(lastErr);
+          const bodyTxt = JSON.stringify(data);
+          // daily quota exhausted: all models share it, so stop the whole run now
+          if (code === 429 && /RESOURCE_EXHAUSTED/i.test(bodyTxt) && /per ?day|PerDay|limit: 0/i.test(bodyTxt)) {
+            GEMINI_DEAD = lastErr;
+            throw Object.assign(new Error("Gemini daily quota exhausted: " + lastErr), { fatal: !canUseGroq() });
+          }
+          if ([400, 403, 404].includes(code)) break;
+          if (code === 503 || code === 429 || code === 500) {
+            OVERLOAD_HITS++;
+            if (OVERLOAD_HITS >= 4) {
+              GEMINI_DEAD = lastErr;
+              throw Object.assign(new Error("Gemini overloaded or rate-limited repeatedly, giving up: " + lastErr), { fatal: !canUseGroq() });
+            }
+            if (attempt === 0) { await sleep(10000 * OVERLOAD_HITS); continue; }
+            break; // try the next model
+          }
+          await sleep(5000);
+          continue;
+        }
+        const text = (data.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
+        if (!text) { lastErr = `${model} empty response (${data.candidates?.[0]?.finishReason || "?"})`; log(lastErr); continue; }
+        OVERLOAD_HITS = 0;
+        log(`gemini model ${model} answered (${text.length} chars)`);
+        if (!json) return { provider: "gemini", model, out: text };
+        try {
+          return { provider: "gemini", model, out: JSON.parse(text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "")) };
+        } catch { lastErr = `${model} returned invalid JSON`; log(lastErr); }
+      }
+    }
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+  throw new Error(`All Gemini models failed: ${lastErr}`);
+}
+
+function groqRetryMs(headerText, errMsg, attempt) {
+  let sec = 0;
+  const h = String(headerText || "").match(/retry-after:\s*(\d+)/i);
+  if (h) sec = Number(h[1]);
+  const m = String(errMsg || "").match(/try again in (\d+(?:\.\d+)?)\s*s/i);
+  if (m) sec = Math.max(sec, Math.ceil(Number(m[1])));
+  if (!sec) sec = Math.min(60, 12 * (attempt + 1));
+  return Math.min(90_000, Math.max(8_000, sec * 1000));
+}
+
+async function groq(prompt, { json = true, temperature = 0.8, reasoning = "low" } = {}) {
+  if (!GROQ_KEY) throw new Error("GROQ_API_KEY is missing");
+  if (GROQ_DEAD) throw Object.assign(new Error("Groq unavailable (stopped earlier this run): " + GROQ_DEAD), { fatal: true });
+  const tmp = mkdtempSync(join(tmpdir(), "aw-groq-"));
+  const hdr = join(tmp, "h"), req = join(tmp, "req.json"), respH = join(tmp, "rh"), respB = join(tmp, "rb");
+  writeFileSync(hdr, `Authorization: Bearer ${GROQ_KEY}\nContent-Type: application/json\nUser-Agent: ${UA}\n`, { mode: 0o600 });
+  const system = json
+    ? "You are a careful article writer. Return only valid JSON that matches the requested schema. No markdown fences and no commentary. When a body field is requested, write a long, complete article of 1,350-1,650 words in that field; short drafts are unusable. Always include faq (4-6 items) and story (exactly 7 cards) as top-level JSON keys, never only as body sections."
+    : "You are a careful article writer. Follow the instructions exactly.";
+  let lastErr = "";
+  try {
+    for (const model of GROQ_MODELS) {
+      let useJsonFormat = json;
+      const payload = {
+        model,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: prompt },
+        ],
+        temperature,
+        // qwen/qwen3.8-27b caps completions at 16384; gpt-oss allows 32768.
+        max_tokens: /qwen/i.test(model) ? 16384 : 32768,
+      };
+      if (/gpt-oss/i.test(model)) {
+        payload.reasoning_effort = reasoning;
+        payload.include_reasoning = false;
+      }
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (GROQ_DEAD) throw killGroq(GROQ_DEAD);
+        await groqCooldown();
+        if (useJsonFormat) payload.response_format = { type: "json_object" };
+        else delete payload.response_format;
+        writeFileSync(req, JSON.stringify(payload));
+        let code = 0, raw = "", headerText = "";
+        try {
+          const printed = execFileSync("curl", ["-sS", "-m", "180", "-H", `@${hdr}`, "--data-binary", `@${req}`,
+            "-D", respH, "-o", respB, "-w", "%{http_code}",
+            "https://api.groq.com/openai/v1/chat/completions"], { encoding: "utf8", maxBuffer: 64 << 20 });
+          code = Number(printed.trim());
+          raw = existsSync(respB) ? readFileSync(respB, "utf8") : "";
+          headerText = existsSync(respH) ? readFileSync(respH, "utf8") : "";
+        } catch (e) { lastErr = `${model} curl failed (${String(e.message).split("\n")[0].slice(0, 120)})`; log(lastErr); continue; }
+        let data = {};
+        try { data = JSON.parse(raw); } catch {}
+        if (code !== 200) {
+          const errMsg = String(data?.error?.message || "").replace(/\s+/g, " ").slice(0, 400);
+          lastErr = `${model} HTTP ${code} ${data?.error?.code || data?.error?.type || ""} ${errMsg}`.trim();
+          log(lastErr);
+          if (code === 400 && /json_validate_failed/i.test(raw) && useJsonFormat) {
+            useJsonFormat = false;
+            log(`${model} json_validate_failed; retrying without strict JSON mode`);
+            continue;
+          }
+          if ([400, 401, 403, 404].includes(code)) break;
+          // Daily caps (TPD/RPD) will not reset in this run; skip this model and try the next.
+          if (code === 429 && /tokens per day|\bTPD\b|requests per day|\bRPD\b/i.test(`${errMsg} ${raw}`)) {
+            log(`${model} daily quota exhausted; skipping to the next Groq model`);
+            break;
+          }
+          if (code === 503 || code === 429 || code === 500) {
+            GROQ_OVERLOAD_HITS++;
+            const wait = groqRetryMs(headerText, errMsg, attempt);
+            groqRateWaitMs += wait;
+            if (GROQ_OVERLOAD_HITS >= 4 || groqRateWaitMs >= GROQ_RATE_BUDGET_MS) {
+              throw killGroq(`${lastErr} (rate-limit budget exhausted)`);
+            }
+            log(`waiting ${Math.round(wait / 1000)}s for Groq rate limit (budget ${Math.round(groqRateWaitMs / 1000)}s/${Math.round(GROQ_RATE_BUDGET_MS / 1000)}s)`);
+            await sleep(wait);
+            continue;
+          }
+          await sleep(5000);
+          continue;
+        }
+        const msg = data.choices?.[0]?.message || {};
+        const text = String(msg.content || "").trim();
+        if (!text) { lastErr = `${model} empty response (${data.choices?.[0]?.finish_reason || "?"})`; log(lastErr); continue; }
+        if (json && text.length < 400) { lastErr = `${model} response too short (${text.length} chars)`; log(lastErr); continue; }
+        rememberGroqUsage(data, text.length);
+        log(`groq model ${model} answered (${text.length} chars, ${groqLastTokens} tokens)`);
+        if (!json) return { provider: "groq", model, out: text };
+        try {
+          return { provider: "groq", model, out: JSON.parse(text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "")) };
+        } catch { lastErr = `${model} returned invalid JSON`; log(lastErr); }
+      }
+    }
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+  throw new Error(`All Groq models failed: ${lastErr}`);
+}
+
+async function complete(prompt, { json = true, temperature = 0.8, models, parts = [], provider, reasoning } = {}) {
+  const order = provider ? [provider] : writerProviders();
+  if (!order.length) throw new Error("No article writer available (need GEMINI_API_KEY or GROQ_API_KEY)");
+  let lastErr;
+  for (const p of order) {
+    if (p === "gemini") {
+      if (!KEY) { lastErr = new Error("GEMINI_API_KEY is missing"); continue; }
+      try {
+        return await gemini(prompt, { json, temperature, models: models || MODELS, parts });
+      } catch (e) {
+        lastErr = e;
+        if (order.includes("groq") && GROQ_KEY && !parts.length) {
+          log(`Gemini failed (${e.message}); falling back to Groq`);
+          continue;
+        }
+        throw e;
+      }
+    }
+    if (p === "groq") {
+      if (parts.length) { lastErr = new Error("Groq fallback does not support image inputs"); continue; }
+      if (!GROQ_KEY) { lastErr = new Error("GROQ_API_KEY is missing"); continue; }
+      try {
+        return await groq(prompt, { json, temperature, reasoning });
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+  }
+  throw lastErr || new Error("No LLM provider produced a response");
+}
+
+// ---------- link + content checks ----------
+async function urlOk(url) {
+  let host = "";
+  try { host = new URL(url).hostname; } catch { return false; }
+  if (AFFIL_HOSTS.some((h) => host.endsWith(h))) return false;
+  const trusted = AUTH_HOST.test(host);
+  const headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+  for (const method of ["HEAD", "GET"]) {
+    try {
+      const r = await fetch(url, { method, redirect: "follow", headers, signal: AbortSignal.timeout(20000) });
+      if (r.status >= 200 && r.status < 300) return true;
+      // known .gov/.edu hosts often block datacenter runners with 403/405: the page exists, so accept it
+      if (trusted && (r.status === 403 || r.status === 405)) return true;
+    } catch { /* try GET next */ }
+  }
+  return false;
+}
+const BANNED_HOST = /(^|\.)(amazon\.|amzn\.to|walmart\.|ebay\.|target\.com|bestbuy\.|homedepot\.|lowes\.|wayfair\.|etsy\.|aliexpress\.|costco\.|temu\.|shein\.)/i;
+const AUTH_HOST = /\.(gov|edu|mil)$|\.gov\.uk$|\.ac\.uk$/i;
+const RISKY = [
+  /\bwe (?:tested|tried|used|reviewed)\b/i, /\b(?:our|my) (?:test|tests|testing|team tested)\b/i, /\bin our (?:testing|experience|kitchen|home)\b/i,
+  /\bhands-on\b/i, /\b\d(?:\.\d)?\s?(?:out of|\/)\s?(?:5|10)\b/i, /\b\d(?:\.\d)?[- ]stars?\b/i, /\btestimonial/i,
+  /\bcustomers (?:say|love|rave|report)\b/i, /\breviewers (?:say|love|rave|report)\b/i, /\bcures?\b/i, /\bclinically\b/i,
+  /\bdoctor[- ]recommended\b/i, /\bkills? (?:99|germs|bacteria|viruses)/i, /\bguaranteed results\b/i,
+];
+function riskyHits(text) {
+  const hits = [];
+  for (const re of RISKY) {
+    const g = new RegExp(re.source, "gi");
+    for (const m of text.matchAll(g)) {
+      const before = text.slice(Math.max(0, m.index - 30), m.index).toLowerCase();
+      if (/\b(not|never|no|n't|haven't|didn't)\b|n't /.test(before)) continue;
+      hits.push(m[0]);
+    }
+  }
+  return [...new Set(hits)];
+}
+const UNTESTED = [
+  /\b(?:we|this desk|dispatch cove)\s+(?:have|has|had)\s+not\s+(?:tested|used|run|tried|measured|held|ordered|watched)/i,
+  /\bwe\s+(?:did not|didn't|do not|don't)\s+(?:test|use|run|measure|hold|order|watch|try)\b/i,
+  /\b(?:have|has|had)(?:n't| not)\s+tested\b/i,
+  /\bnot\s+hands-?on\b/i,
+  /\bhands-?on\s+tested\b/i,
+  /\bnot a test(?:\s+by|\s+we|\s+from|\s+of|\s+this)?\b/i,
+  /\bthis desk has not\b/i,
+  /\bwe have not (?:stood|confirmed|repeated|been)\b/i,
+];
+function untestedHits(text) {
+  const hits = [];
+  for (const re of UNTESTED) {
+    const g = new RegExp(re.source, "gi");
+    for (const m of text.matchAll(g)) hits.push(m[0]);
+  }
+  return [...new Set(hits)];
+}
+// Seller-benefit hedges. Care-instruction conditionals ("if the maker says so") and
+// pointers to current price/terms/care on the seller's page are allowed.
+const SELLER_HEDGES = [
+  /\baccording to the (?:seller|manufacturer|brand|maker|vendor|listing|product page)\b/i,
+  /\bper the (?:seller|maker|manufacturer|brand|vendor|listing|product(?: page)?)\b/i,
+  /\b(?:is |are |was |were )?marketed as\b/i,
+  /\bsold as\b/i,
+  /\bon its product page\b/i,
+  /\bthe (?:seller|manufacturer|brand|maker|vendor) (?:says|claims|states|lists|notes|reports|describes|presents|calls)\b/i,
+];
+function sellerHedgeHits(text) {
+  const hits = [];
+  for (const re of SELLER_HEDGES) {
+    const g = new RegExp(re.source, "gi");
+    for (const m of text.matchAll(g)) {
+      const before = text.slice(Math.max(0, m.index - 48), m.index).toLowerCase();
+      const around = text.slice(Math.max(0, m.index - 48), Math.min(text.length, m.index + m[0].length + 48)).toLowerCase();
+      if (/\b(if|unless|when|whether)\b/.test(before)) continue;
+      if (/\b(says so|says otherwise|not to soak|stay out|care instructions|care steps|placement guidance|maker allows)\b/.test(around)) continue;
+      hits.push(m[0]);
+    }
+  }
+  return [...new Set(hits)];
+}
+function sameOffer(a, b) {
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    const norm = (u) => `${u.hostname.replace(/^www\./, "")}${u.pathname.replace(/\/$/, "")}${u.search}`;
+    return norm(ua) === norm(ub);
+  } catch {
+    return false;
+  }
+}
+const words = (md) => md.replace(/\{%[\s\S]*?%\}/g, " ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[#*_>`|-]/g, " ").split(/\s+/).filter((w) => /[a-z0-9]/i.test(w)).length;
+const mdLinks = (md) => [...md.matchAll(/\[([^\]]+)\]\(([^)\s]+)\)/g)].map((m) => ({ full: m[0], text: m[1], href: m[2], index: m.index }));
+
+
+// Mechanical fixes done in code so we never spend a Gemini call re-prompting for them.
+function autoFix(a, ctx) {
+  if (!a || typeof a.body !== "string") return a;
+  const stripped = a.body.replace(/\n## (?:Sources|FAQ|Frequently asked questions)\b[\s\S]*?(?=\n## |$)/gi, "\n");
+  if (stripped !== a.body) {
+    a.body = stripped.trim() + "\n";
+    log("auto-removed Sources/FAQ section from body");
+  }
+  const known = new Set(ctx.existing.map((g) => g.url));
+  const seen = new Set();
+  let internalCount = 0;
+  // drop internal links that are not existing article URLs, duplicates, and extras beyond 6
+  a.body = a.body.replace(/\[([^\]]+)\]\((\/[^)\s]*)\)/g, (m, t, href) => {
+    const target = href.split("#")[0];
+    if (!known.has(target) || seen.has(target) || internalCount >= 6) return t;
+    seen.add(target); internalCount++;
+    return m;
+  });
+  // insert one in-sentence affiliate CTA when missing
+  const product = ctx.product ? PRODUCTS[ctx.product] : null;
+  if (product && product.href) {
+    const has = mdLinks(a.body).some((l) => sameOffer(l.href, product.href));
+    if (!has) {
+      const short = a.body.search(/\{%\s*product\s+"[a-z0-9]+"\s*%\}/);
+      const limit = short === -1 ? a.body.length : short;
+      const paras = [...a.body.slice(0, limit).matchAll(/(^|\n\n)([^\n#{|>*-][^\n]*[.!?])(?=\n\n|\s*$)/g)];
+      const pick = paras.reverse().find((m) => !/^\d+\./.test(m[2]) && !/\]\(https?:/.test(m[2]));
+      if (pick) {
+        const name = product.name || "this product";
+        const sentence = ` If this sounds like what you need, [take a look at what ${name} offers](${product.href}).`;
+        const start = pick.index + pick[1].length;
+        a.body = a.body.slice(0, start) + pick[2] + sentence + a.body.slice(start + pick[2].length);
+        log("auto-inserted affiliate CTA");
+      }
+    }
+    const n = (a.body.match(new RegExp(`\\{%\\s*product\\s+"${ctx.product}"\\s*%\\}`, "g")) || []).length;
+    if (n === 0) {
+      a.body = a.body.replace(/\s*$/, `\n\n{% product "${ctx.product}" %}\n`);
+      log("auto-inserted product shortcode");
+    }
+  }
+  return a;
+}
+
+function checkArticle(a, ctx) {
+  const errs = [];
+  for (const k of ["title", "metaTitle", "description", "dek", "slug", "body", "faq", "sources", "related", "heroQuery", "heroAlt"]) if (!a[k]) errs.push(`missing field ${k}`);
+  if (ENABLE_STORIES && !a.story) errs.push("missing field story");
+  if (errs.length) return errs;
+  const body = a.body;
+  const wc = words(body);
+  if (wc < 1150 || wc > 1900) errs.push(`body has ${wc} words; it must be 1,250-1,750 words`);
+  if (/^# /m.test(body)) errs.push("body must not contain an H1 (# ). Start sections with ## ");
+  if ((body.match(/^## /gm) || []).length < 5) errs.push("body needs at least 5 H2 sections");
+  if (!/^### /m.test(body)) errs.push("body needs at least one H3 (###) subsection");
+  if (!/^## .*pros and cons/im.test(body)) errs.push('body needs a "## Pros and cons" section (or "## ... pros and cons ...")');
+  if (!/\*\*Pros:?\*\*/.test(body)) errs.push('Pros and cons section must lead with a **Pros** list');
+  if (!/\*\*Good to know:?\*\*|\*\*Best results(?: when)?:?\*\*|^### Good to know|^### Best results/im.test(body)) {
+    errs.push('Pros and cons section needs a **Good to know** or **Best results when** list, not a drawback-style **Cons** list');
+  }
+  if (/^###?\s+Cons\b/m.test(body) || /\*\*Cons:?\*\*/.test(body)) {
+    errs.push('use **Good to know** or **Best results when** instead of a **Cons** heading');
+  }
+  if (!/^## .*who .{0,40}(ideal for|(it|this) is for)/im.test(body)) {
+    errs.push('body needs a "## Who it\'s ideal for" section (or similar positive fit wording)');
+  }
+  if (/^## .*who should skip/im.test(body) || /^###?\s+Who should skip/im.test(body)) {
+    errs.push('reframe "who should skip it" as "## Who it\'s ideal for" with a positive fit note');
+  }
+  if (/^## (sources|faq|frequently asked)/im.test(body)) errs.push("do not write Sources or FAQ sections in body; they come from fields");
+  if (!/^## The short answer\n/i.test(body.trimStart())) errs.push('body must open with "## The short answer"');
+  else {
+    const afterHeading = body.trimStart().replace(/^##[^\n]*\n+/, "");
+    const opening = (afterHeading.split(/\n\s*\n/)[0] || "")
+      .replace(/\[([^\]]+)\](\([^)]*\))/g, "$1")
+      .replace(/[*_`]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const openingWords = opening.split(/\s+/).filter(Boolean).length;
+    if (openingWords < 40 || openingWords > 60) {
+      errs.push(`opening answer is ${openingWords} words; it must be a 40-60 word direct answer to the title`);
+    }
+  }
+  if (ctx.product) {
+    const n = (body.match(new RegExp(`\\{%\\s*product\\s+"${ctx.product}"\\s*%\\}`, "g")) || []).length;
+    if (n !== 1) errs.push(`body must contain the line {% product "${ctx.product}" %} exactly once`);
+    const short = body.search(/\{%\s*product\s+"[a-z0-9]+"\s*%\}/);
+    if (short !== -1) {
+      const start = body.lastIndexOf("\n## ", short);
+      const slice = body.slice(start === -1 ? 0 : start, short);
+      const cons = slice.match(/\b(trade-?offs?|drawbacks?|limitations?|not a replacement|it is not for|who should skip|does not add a pump|not a pressure washer|treat it as a second surface|hard on (?:a |the )?knife)\b/i);
+      if (cons) errs.push(`sales section must be benefits-only (remove "${cons[0]}" from the paragraphs above the product box)`);
+    }
+  } else if (/\{%\s*product/.test(body)) errs.push("this article has no product; remove the product shortcode");
+  if (/\{%(?!\s*product\s+"[a-z0-9]+"\s*%\})/.test(body)) errs.push("no Nunjucks tags other than the product shortcode");
+  const internal = mdLinks(body).filter((l) => l.href.startsWith("/"));
+  const known = new Set(ctx.existing.map((g) => g.url));
+  const targets = internal.map((l) => l.href.split("#")[0]);
+  for (const t of targets) if (!known.has(t)) errs.push(`internal link ${t} is not an existing article URL`);
+  if (new Set(targets).size !== targets.length) errs.push("each internal target may be linked only once in body");
+  if (new Set(targets).size < Math.min(3, known.size)) errs.push(`only ${new Set(targets).size} in-sentence internal links; need 3-6 different articles`);
+  if (new Set(targets).size > 6) errs.push("more than 6 internal links");
+  for (const l of internal) {
+    const line = body.slice(body.lastIndexOf("\n", l.index) + 1, body.indexOf("\n", l.index) === -1 ? undefined : body.indexOf("\n", l.index));
+    if (/^#/.test(line)) errs.push(`internal link inside a heading: ${l.full}`);
+    if (/^(click here|here|this|read more|this guide)$/i.test(l.text.trim())) errs.push(`weak anchor text "${l.text}"`);
+  }
+  const productHref = (ctx.product && PRODUCTS[ctx.product] && /^https?:\/\//i.test(String(PRODUCTS[ctx.product].href || "").trim())) ? PRODUCTS[ctx.product].href : "";
+  for (const l of mdLinks(body).filter((x) => /^https?:/i.test(x.href))) {
+    let host = ""; try { host = new URL(l.href).hostname.replace(/^www\./, ""); } catch {}
+    if (BANNED_HOST.test(host)) errs.push(`forbidden external link ${host}`);
+    else if (AFFIL_HOSTS.includes(host) && !sameOffer(l.href, productHref)) errs.push(`forbidden external link ${host}`);
+  }
+  if (ctx.product && productHref) {
+    const ctas = mdLinks(body).filter((l) => sameOffer(l.href, productHref));
+    if (!ctas.length) errs.push("body needs at least one in-sentence call to action linking to the product's affiliate URL");
+    for (const l of ctas) {
+      if (/^(click here|here|this|read more|this guide|buy now)$/i.test(l.text.trim())) errs.push(`weak affiliate anchor text "${l.text}"`);
+    }
+  }
+  const hay = [body, ...a.faq.map((f) => `${f.q} ${f.a}`), a.description, a.dek, ...(Array.isArray(a.story) ? a.story.map((s) => `${s.title || ""} ${s.text || ""}`) : [])].join("\n");
+  const hits = riskyHits(hay);
+  if (hits.length) errs.push(`remove these claims (no tests, ratings, testimonials or medical claims): ${hits.join("; ")}`);
+  const untested = untestedHits(hay);
+  if (untested.length) errs.push(`do not say or imply we did not test or use the product (remove: ${untested.join("; ")})`);
+  const hedges = sellerHedgeHits(hay);
+  if (hedges.length) errs.push(`state product benefits confidently as what the product is designed to do; do not hedge with seller-attribution phrases (remove: ${hedges.join("; ")})`);
+  if (ENABLE_STORIES && (!Array.isArray(a.story) || a.story.length !== 7)) errs.push("story must have exactly 7 cards");
+  if (a.faq.length < 4) errs.push("faq needs 4-6 items");
+  if (a.metaTitle.length > 65) errs.push("metaTitle must be at most 60 characters");
+  if (a.description.length < 110 || a.description.length > 170) errs.push("description must be 140-160 characters");
+  if (!/^[a-z0-9-]{8,80}$/.test(a.slug)) errs.push("slug must be lowercase-hyphenated");
+  if (ctx.existing.some((g) => g.url.endsWith(`/${a.slug}/`))) errs.push("slug already exists");
+  return errs;
+}
+
+// ---------- prompt ----------
+function buildPrompt(item, existing, feedback) {
+  const product = item.product ? PRODUCTS[item.product] : null;
+  const list = existing.map((g) => `- ${g.url} | ${g.data.title} | ${g.data.description}`).join("\n");
+  const productBlock = product ? `
+PRODUCT FOR THIS ARTICLE (the only facts you may state about it; do NOT invent a price, spec, size, rating, or review):
+key: ${item.product}
+name: ${product.name}
+affiliate URL (use this exact URL for in-text calls to action): ${product.href}
+facts: ${product.summary} ${product.points.join(" ")}
+State these facts confidently as what the product is designed to do or does. Do not hedge them with "according to the seller," "per the seller," "the manufacturer says," "the brand claims," "per the product page," "the seller presents," or "is marketed as."
+Write a short section near the end titled "Where ${product.name} fits" (or similar). In that section, and in every paragraph that sells the product, mention ONLY benefits and persuade the reader to look at the offer. Never mention cons, trade-offs, drawbacks, limitations, or what the product is not. Do not undercut the product there (no "but it won't...", no "treat it as a second surface", no "not a replacement for..."). Elsewhere in the article, keep the how-to honest, but do not undercut the product: the "## Pros and cons" section should lead with strong **Pros**, then a **Good to know** or **Best results when** list of constructive usage, care, or fit tips (not a drawback list). Frame the audience section as "## Who it's ideal for" (or similar), with a short positive fit note rather than a "who should skip it" or "it is not for" block.
+Place this exact line on its own line, once, at the end of that benefits-only sales section: {% product "${item.product}" %}
+The product box already includes a button to the same offer. Still include in-sentence Markdown links to the affiliate URL: [natural, specific anchor](${product.href}). Write at least two of these CTAs in benefit-focused sentences, where a reader who is ready to look at the offer would naturally want them. Never use "click here", "buy now", or "this guide" as the anchor. Do not place a CTA immediately after a list of drawbacks.
+Do not write an affiliate disclosure, a commission notice, or a "we may earn" line; the site inserts a short note automatically before the first offer link.` : `
+This is a helpful guide with no product box. Do not include any product shortcode or affiliate URL.`;
+  return `You write for Dispatch Cove (dispatchcove.com), a US English guide site for truck dispatchers and owner-operators. US English, US units. Audience: dispatchers, small fleets, and owner-operators in the United States.
+
+Every article must balance three goals. The piece should read as a useful guide first, not as an ad:
+1) ATTRACT TRAFFIC (SEO). Write for this target long-tail search and the real intent behind it: "${item.keyword}". Put the target keyword, or a very close natural variant, in the title (the title becomes the on-page H1), in the 40-60 word opening answer, and in exactly one H2. Use descriptive, specific H2/H3s a searcher would scan. The first paragraph must be a direct 40-60 word answer to the title question, so a search or AI system can quote it. The FAQ field should cover related questions people actually search.
+2) ADD REAL VALUE. The guide must stand on its own as practical how-to help even if the reader never clicks a product link. Give clear steps, constructive "good to know" tips, and advice they can use today. Be specific, never filler.
+3) SELL, WITHOUT READING AS AN AD. When a product is provided, give it a benefits-only sales section: concrete benefits, a next step, and in-sentence calls to action to the affiliate URL. In that section, and in any paraphrase of the product box, never mention cons, trade-offs, or drawbacks. Do not write a sales letter, and do not treat the product as the only possible answer in the rest of the guide.
+
+Voice: plain, specific, confident, a little dry; short declarative sentences; practical steps; in Pros and cons, lead with benefits and frame the rest as gentle "good to know" or "best results when" tips, not drawbacks; in the product sales section, only benefits. Persuasive because it is useful, never bland filler, never hype.
+
+ARTICLE TOPIC: ${item.topic}
+TARGET LONG-TAIL SEARCH: "${item.keyword}"
+SILO: ${item.silo}
+TODAY: ${TODAY}
+${productBlock}
+
+HARD RULES
+1. Body: 1,300-1,700 words of Markdown. Use ## for sections and ### for subsections. No H1. Open with "## The short answer", then immediately a single 40-60 word paragraph that directly answers the title question in plain English. No preamble, no "in this guide", no throat-clearing. Then continue the article. Include "## Pros and cons" that leads with a strong bold **Pros** list, then a bold **Good to know** or **Best results when** list of constructive usage, care, or fit tips (never a drawback-style **Cons** list). Include "## Who it's ideal for" (or similar positive wording) with a short positive fit note; do not write a "who should skip it" or "it is not for" block. Do NOT write a Sources or FAQ section in the body.
+2. Never claim we tested, tried, used, measured, or reviewed anything. Also never state or imply that we did not test or use a product. Do not write phrases such as "we haven't tested", "we have not used", "we did not use", "not hands-on", "this desk has not tested", or "not a test by Dispatch Cove." No testimonials, quotes from customers, review counts, star ratings, or invented statistics. No medical or health claims. No prices or specs unless given above. Attribute official publications (.gov, .edu, or a care/manual page) clearly. For the featured product, state the given benefits confidently as what the product is designed to do or does (for example, "Summar Shield is designed to protect approved invoices when a broker fails to pay," not "according to the seller, Summar Shield..."). Never write hedging phrases such as "according to the seller," "the manufacturer says," "the brand claims," "per the product page," "per the seller," "per the maker," "the seller says," "the seller presents," or "is marketed as." You may still point readers to the current offer, price, or care instructions on the seller's page.
+2b. PRODUCT SALES SECTION: when a product is provided, the "Where X fits" section (or equivalent) and any paragraph that sells the product must be benefits-only and should persuade the reader to look at the offer. Write those benefits as facts about what the product is designed to do, not as attributed claims. Never mention cons, trade-offs, drawbacks, or what the product cannot do in that section.
+2c. PROS AND AUDIENCE: do not undercut the product in "## Pros and cons" or the audience section either. Lead with strong benefits. Turn any limitations into gentle, constructive "good to know" / "best results when" tips (usage, care, or fit). Frame the audience as "who it's ideal for," not "who should skip it." Stay honest: no false claims, no medical claims, no fake testimonials, and never say or imply that we did not test or use the product.
+3. INTERNAL LINKS: put 3-6 links to DIFFERENT existing articles from the list below INSIDE normal sentences, as Markdown links [descriptive anchor](/path/). Anchors are 2-6 natural words describing the target topic (vary them; never "click here"/"this guide"). Each target at most once. Never inside headings. Only use URLs from this list:
+${list}
+4. EXTERNAL SOURCES: cite 2-3 real, neutral authority pages (US .gov, .edu extension services, or an official manufacturer care/manual page) that you are confident exist at that exact URL; link each once inside a sentence in the body and list it in "sources". Also add 2 extra backup candidates at the end of "sources" with "inline": false (prefer stable official pages like fmcsa.dot.gov, transportation.gov, or the official product or agency page that is certain to exist). Mark the linked ones "inline": true. Never link to stores, Amazon, marketplaces, or blogs/roundups with affiliate links.
+5. FAQ: 4-6 real questions people search, answers 2-4 sentences.
+5b. STYLE: US spelling (color, not colour). Named agencies, load boards, and official tools are fine when they are the subject. Do not invent brands. Do not copy the product facts word for word; paraphrase briefly and let the product box carry the details. Only attribute a claim to a source if that page is specifically about it; otherwise state general advice without attribution. Internal links must read naturally: if a target is only loosely related, write a short bridging sentence that gives the reader a real reason to click.
+6. "related": choose the 3 most related existing articles (href from the list) with a one-sentence note on why.
+7. Mid-article photo: do not put any image, figure, or HTML in the body (the publisher inserts one photo later). Set "midImageSection" to the exact H2 text of a practical how-to section near the middle (not "The short answer", not pros/cons, not "who it's ideal for" or "who it is for"). Set "midImageQuery" to a 2-4 word stock-photo search for a real scene that illustrates that section (no brand names, no text in the scene). Set "midImageAlt" to one descriptive sentence for that photo that naturally includes the target keyword.
+
+Return ONLY JSON with this shape:
+{"title": "question or how-to headline, max 70 chars", "metaTitle": "max 60 chars", "description": "meta description 140-160 chars", "dek": "1-2 sentence standfirst", "slug": "lowercase-hyphen-slug", "readTimeNote": "", "heroQuery": "stock photo search for a wide hero image, 2-4 words", "heroAlt": "alt text for that hero", "midImageSection": "exact H2 text", "midImageQuery": "2-4 word photo search", "midImageAlt": "descriptive alt including the keyword", "body": "markdown", "toc": [{"heading": "exact H2 text", "label": "2-4 word label"}], "faq": [{"q": "", "a": ""}], "sources": [{"name": "Publisher, page title", "url": "https://...", "note": "one sentence on what it supports"}], "related": [{"href": "/path/", "title": "", "note": ""}]}
+${feedback ? `\nYOUR PREVIOUS DRAFT FAILED THESE CHECKS. Fix every one:\n- ${feedback.join("\n- ")}\n` : ""}`;
+}
+
+
+function esc(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function midFigureHtml({ src, src800, src1600, alt, width, height, caption, captionHtml, product }) {
+  const img = src
+    ? `<img src="${src}" alt="${esc(alt)}" width="${width}" height="${height}" loading="lazy" decoding="async">`
+    : `<img src="${src800}" srcset="${src800} 800w, ${src1600} 1600w" sizes="(min-width: 1040px) 40rem, calc(100vw - 2.5rem)" alt="${esc(alt)}" width="${width}" height="${height}" loading="lazy" decoding="async">`;
+  const photo = product
+    ? `<a class="product-photo-link affiliate-link" data-product="${esc(product.name)}" href="${esc(product.href)}" rel="sponsored nofollow noopener" target="_blank">${img}</a>`
+    : img;
+  return `<figure class="frame mid-figure">\n${photo}\n<figcaption>${captionHtml || esc(caption)}</figcaption>\n</figure>`;
+}
+function insertMidImage(body, figure, headingHint) {
+  const headings = [...body.matchAll(/^## .+$/gm)];
+  const skip = /the short answer|who (it|this) is for|who it.?s ideal for|pros and cons|good to know|best results/i;
+  const usable = headings.filter((h) => !skip.test(h[0]));
+  const pool = usable.length ? usable : headings.slice(1);
+  if (!pool.length) {
+    const midAt = Math.max(0, Math.floor(body.length / 2));
+    const cut = body.indexOf("\n\n", midAt);
+    const at = cut === -1 ? midAt : cut;
+    return `${body.slice(0, at)}\n\n${figure}\n${body.slice(at)}`;
+  }
+  let target;
+  const hint = String(headingHint || "").trim().toLowerCase();
+  if (hint) target = pool.find((h) => h[0].slice(3).trim().toLowerCase() === hint);
+  if (!target) {
+    const midAt = Math.floor(body.length / 2);
+    target = pool.reduce((best, h) => Math.abs(h.index - midAt) < Math.abs(best.index - midAt) ? h : best);
+  }
+  let at = target.index + target[0].length;
+  const rest = body.slice(at);
+  const lead = rest.match(/^\n+(?:\{%[\s\S]*?%\}[ \t]*\n+|[^#\n][^\n]*(?:\n(?!## |### |$)[^\n]*)*\n*)/);
+  if (lead) at += lead[0].length;
+  return `${body.slice(0, at).replace(/\n*$/, "\n\n")}${figure}\n${body.slice(at).replace(/^\n*/, "")}`;
+}
+function producerMidPath(product) {
+  if (!product) return "";
+  for (const p of [...(product.storyImages || []), product.image]) {
+    if (!p) continue;
+    const file = join(SRC, String(p).replace(/^\//, ""));
+    if (existsSync(file)) return file;
+  }
+  return "";
+}
+
+// ---------- images ----------
+const usedImages = new Set();
+const REGISTRY = join(import.meta.dirname, "hero-registry.json");
+const HERO_DHASH_MAX = 8; // 64-bit dHash; this close usually means the same photo
+const usedHeroes = []; // { slug, file, sha256, dhash, sourceUrl, sourceId, role }
+
+function srcAsset(p, suffix = "") {
+  const rel = String(p || "").replace(/^\//, "");
+  if (!rel) return "";
+  if (suffix) return join(SRC, `${rel}${suffix}`);
+  return join(SRC, rel);
+}
+function pixabayId(url) {
+  const m = String(url || "").match(/-(\d+)\/?(?:[?#].*)?$/);
+  return m ? m[1] : "";
+}
+function sha256Buf(buf) {
+  return createHash("sha256").update(buf).digest("hex");
+}
+async function dhashHex(buf, size = 8) {
+  const { data } = await sharp(buf).rotate().grayscale().resize(size + 1, size, { fit: "fill" }).raw().toBuffer({ resolveWithObject: true });
+  let bits = "";
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) bits += data[y * (size + 1) + x] < data[y * (size + 1) + x + 1] ? "1" : "0";
+  }
+  return BigInt(`0b${bits}`).toString(16).padStart((size * size) / 4, "0");
+}
+function hammingHex(a, b) {
+  if (!a || !b) return 64;
+  return (BigInt(`0x${a}`) ^ BigInt(`0x${b}`)).toString(2).replace(/0/g, "").length;
+}
+function rememberSource(url, id) {
+  if (url) usedImages.add(url);
+  if (id) usedImages.add(`pixabay:${id}`);
+}
+function heroSharp(buf, w = 1600) {
+  return sharp(buf).rotate().resize(w, Math.round((w * 9) / 16), { fit: "cover", position: "attention" }).webp({ quality: 72 });
+}
+const usedContentSha = new Set();
+const usedContentDhash = [];
+function rememberContent(sha, dhash) {
+  if (sha) usedContentSha.add(sha);
+  if (dhash) usedContentDhash.push(dhash);
+}
+function heroLooksUsed(dhash, sha) {
+  if (sha && (usedContentSha.has(sha) || usedHeroes.some((h) => h.sha256 === sha))) return true;
+  if (!dhash) return false;
+  return usedHeroes.some((h) => hammingHex(h.dhash, dhash) <= HERO_DHASH_MAX)
+    || usedContentDhash.some((h) => hammingHex(h, dhash) <= HERO_DHASH_MAX);
+}
+async function bufferLooksUsed(buf) {
+  const variants = [buf];
+  // Re-encode with the hero pipeline so a source file is caught when it would
+  // produce a hero already on the site (SHA of the raw file often differs).
+  try { variants.push(await heroSharp(buf, 1600).toBuffer()); } catch { /* raw-hash checks still apply */ }
+  for (const v of variants) {
+    const sha = sha256Buf(v);
+    if (usedContentSha.has(sha) || usedHeroes.some((h) => h.sha256 === sha)) return true;
+    const dhash = await dhashHex(v);
+    if (heroLooksUsed(dhash, sha)) return true;
+  }
+  return false;
+}
+async function indexPublishedImages() {
+  usedContentSha.clear();
+  usedContentDhash.length = 0;
+  for (const h of usedHeroes) rememberContent(h.sha256, h.dhash);
+  const dir = join(SRC, "assets", "images");
+  const files = [];
+  const walk = (p) => {
+    if (!existsSync(p)) return;
+    for (const ent of readdirSync(p, { withFileTypes: true })) {
+      const fp = join(p, ent.name);
+      if (ent.isDirectory()) walk(fp);
+      else if (/\.(webp|jpe?g|png)$/i.test(ent.name)) files.push(fp);
+    }
+  };
+  walk(dir);
+  for (const fp of files) {
+    const rel = (fp.startsWith(`${ROOT}/`) ? fp.slice(ROOT.length + 1) : fp).replaceAll("\\", "/");
+    const published = /(^|\/)guide-/.test(rel) || rel.includes("/articles/") || rel.includes("/stories/");
+    if (!published) continue;
+    const buf = readFileSync(fp);
+    const sha = sha256Buf(buf);
+    if (usedContentSha.has(sha)) continue;
+    usedContentSha.add(sha);
+    usedContentDhash.push(await dhashHex(buf));
+  }
+}
+function loadHeroRegistry() {
+  // Merge the on-disk registry (source URLs/IDs) with a fresh scan of published heroes.
+  let stored = [];
+  try {
+    if (existsSync(REGISTRY)) stored = JSON.parse(readFileSync(REGISTRY, "utf8")).heroes || [];
+  } catch (e) { log(`hero registry read failed: ${e.message}`); }
+  const byFile = new Map(stored.map((h) => [h.file, h]));
+  usedHeroes.length = 0;
+  for (const g of guides()) {
+    const hero = g.data?.hero;
+    if (!hero) continue;
+    const file = srcAsset(hero, "-1600.webp");
+    if (!existsSync(file)) continue;
+    const buf = readFileSync(file);
+    const rel = file.startsWith(`${ROOT}/`) ? file.slice(ROOT.length + 1) : file;
+    const prev = byFile.get(rel) || {};
+    const slug = g.data.slug || String(g.data.permalink || "").replace(/^\/|\/$/g, "").split("/").pop() || prev.slug || "";
+    usedHeroes.push({
+      slug,
+      file: rel,
+      sha256: sha256Buf(buf),
+      dhash: "",
+      sourceUrl: prev.sourceUrl || "",
+      sourceId: prev.sourceId || pixabayId(prev.sourceUrl),
+      role: "hero",
+    });
+    rememberSource(prev.sourceUrl, prev.sourceId || pixabayId(prev.sourceUrl));
+  }
+  // Keep source URLs for heroes that were replaced (file gone) so we still skip that stock photo.
+  for (const h of stored) {
+    rememberSource(h.sourceUrl, h.sourceId || pixabayId(h.sourceUrl));
+    if (h.role === "hero" && h.file && !usedHeroes.some((x) => x.file === h.file) && h.sourceUrl) {
+      /* URL already remembered */
+    }
+  }
+  // Mid-article Pixabay links must not be reused as a later hero either? Mid may reuse? Task: mid must not duplicate a hero. Seed mid source URLs into usedImages too if they appear in bodies.
+  for (const g of guides()) {
+    for (const m of String(g.raw || "").matchAll(/https:\/\/pixabay\.com\/photos\/[^"'\s)]+/g)) {
+      rememberSource(m[0], pixabayId(m[0]));
+    }
+  }
+}
+async function fillHeroDhashes() {
+  for (const h of usedHeroes) {
+    if (h.dhash) continue;
+    const abs = h.file.startsWith("/") ? h.file : join(ROOT, h.file);
+    if (!existsSync(abs)) continue;
+    h.dhash = await dhashHex(readFileSync(abs));
+  }
+}
+function writeHeroRegistry() {
+  const payload = {
+    _readme: "Hero images already used on the site. The autowriter skips these by source URL/ID and by file or perceptual hash when picking a new hero. Mid-article photos also skip any hero.",
+    heroes: usedHeroes.map((h) => ({
+      slug: h.slug,
+      file: h.file,
+      sha256: h.sha256,
+      dhash: h.dhash,
+      sourceUrl: h.sourceUrl || "",
+      sourceId: h.sourceId || "",
+      role: h.role || "hero",
+    })),
+  };
+  writeFileSync(REGISTRY, `${JSON.stringify(payload, null, 2)}\n`);
+}
+async function rememberHero({ slug, file, buf, sourceUrl, sourceId }) {
+  const sha = sha256Buf(buf);
+  const dhash = await dhashHex(buf);
+  const rel = file.startsWith(`${ROOT}/`) ? file.slice(ROOT.length + 1) : file;
+  const rec = { slug: slug || "", file: rel, sha256: sha, dhash, sourceUrl: sourceUrl || "", sourceId: sourceId || pixabayId(sourceUrl), role: "hero" };
+  const i = usedHeroes.findIndex((h) => h.file === rel || h.slug === rec.slug);
+  if (i >= 0) usedHeroes[i] = rec; else usedHeroes.push(rec);
+  rememberSource(rec.sourceUrl, rec.sourceId);
+  rememberContent(rec.sha256, rec.dhash);
+  writeHeroRegistry();
+  return rec;
+}
+
+let openverseBlocked = false;
+const JUNK = /poster|painting|drawing|illustration|engraving|lithograph|map\b|specimen|logo|diagram|coat of arms|flag|film|movie|catalog|catalogue|page \d|book|scan|statue|temple|church|cathedral|saint|god|goddess|shrine|buddha|krishna|shiva|ganesh|idol|deity|religio|bible|cross\b|portrait of|stamp|coin|advert|\bad\b|magazine|newspaper/i;
+
+async function pixabaySearch(query, { orientation = "horizontal", perPage = 10 } = {}) {
+  if (!PIXABAY || !query) return [];
+  const params = new URLSearchParams({
+    key: PIXABAY,
+    q: query,
+    image_type: "photo",
+    orientation,
+    safesearch: "true",
+    per_page: String(perPage),
+  });
+  const r = await fetch(`https://pixabay.com/api/?${params}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(20000) });
+  if (!r.ok) { log(`pixabay ${r.status}`); return []; }
+  const data = await r.json();
+  return Array.isArray(data.hits) ? data.hits : [];
+}
+function scorePixabayHit(hit, query) {
+  const terms = String(query || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  const tags = String(hit.tags || "").toLowerCase();
+  let score = 0;
+  for (const t of terms) if (tags.includes(t)) score += 3;
+  if ((hit.imageWidth || 0) >= 1200) score += 1;
+  score += Math.log10((hit.downloads || 0) + 1) / 10;
+  score += Math.log10((hit.likes || 0) + 1) / 20;
+  if (JUNK.test(tags)) score -= 5;
+  return score;
+}
+async function downloadPixabayHit(hit) {
+  const url = hit.largeImageURL || hit.webformatURL;
+  if (!url) return null;
+  const r = await fetch(url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(30000) });
+  if (!r.ok) return null;
+  const buf = Buffer.from(await r.arrayBuffer());
+  const meta = await sharp(buf).metadata();
+  if (!meta.width || Math.min(meta.width, meta.height) < 540) return null;
+  return { buf, meta, url, pageURL: hit.pageURL, tags: hit.tags, w: hit.imageWidth, h: hit.imageHeight, credit: "Pixabay" };
+}
+async function pixabayMidImage(query) {
+  try {
+    const hits = await pixabaySearch(query, { orientation: "horizontal", perPage: 20 });
+    const ranked = hits
+      .filter((h) => {
+        const url = h.largeImageURL || h.webformatURL;
+        const id = String(h.id || pixabayId(h.pageURL));
+        return url && !usedImages.has(url) && !usedImages.has(h.pageURL) && !usedImages.has(`pixabay:${id}`);
+      })
+      .sort((a, b) => scorePixabayHit(b, query) - scorePixabayHit(a, query));
+    for (const hit of ranked) {
+      const got = await downloadPixabayHit(hit);
+      if (!got) continue;
+      if (await bufferLooksUsed(got.buf)) { log(`pixabay mid skipped, matches an existing hero: ${hit.pageURL || got.url}`); continue; }
+      usedImages.add(got.url);
+      if (hit.pageURL) usedImages.add(hit.pageURL);
+      rememberSource(hit.pageURL, String(hit.id || pixabayId(hit.pageURL)));
+      return { ...got, source: "Pixabay", pixabay: true };
+    }
+    if (!hits.length) log("pixabay: no hits for query");
+  } catch (e) { log(`pixabay ${e.message}`); }
+  return null;
+}
+async function jpegUnder(buf, width = 1200, maxBytes = 200 * 1024) {
+  let quality = 82;
+  let out = await sharp(buf).rotate().resize({ width, withoutEnlargement: true }).jpeg({ quality, mozjpeg: true }).toBuffer();
+  let w = width;
+  while (out.length > maxBytes && quality > 48) {
+    quality -= 8;
+    out = await sharp(buf).rotate().resize({ width: w, withoutEnlargement: true }).jpeg({ quality, mozjpeg: true }).toBuffer();
+  }
+  while (out.length > maxBytes && w > 800) {
+    w -= 100;
+    out = await sharp(buf).rotate().resize({ width: w, withoutEnlargement: true }).jpeg({ quality: 60, mozjpeg: true }).toBuffer();
+  }
+  return out;
+}
+
+async function candidates(query, aspect, n = 4, { skipPixabay = false } = {}) {
+  const out = [];
+  const qs = [...new Set([query, query.split(" ").slice(0, 2).join(" ")])];
+  for (const q of qs) {
+    const lists = [];
+    if (PIXABAY && !skipPixabay) {
+      try {
+        const orient = aspect === "tall" ? "vertical" : "horizontal";
+        const hits = await pixabaySearch(q, { orientation: orient, perPage: 15 });
+        lists.push(hits.map((p) => ({
+          url: p.largeImageURL || p.webformatURL,
+          w: p.imageWidth,
+          h: p.imageHeight,
+          title: p.tags || "",
+          credit: "Pixabay",
+          pageURL: p.pageURL,
+          sourceId: String(p.id || ""),
+        })).filter((x) => x.url && !usedImages.has(x.url) && !usedImages.has(x.pageURL) && !usedImages.has(`pixabay:${x.sourceId}`)));
+      } catch (e) { log(`pixabay ${e.message}`); }
+    }
+    if (PEXELS) {
+      try {
+        const orient = aspect === "tall" ? "portrait" : "landscape";
+        const u = `https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&per_page=15&orientation=${orient}`;
+        const r = await fetch(u, { headers: { Authorization: PEXELS, "User-Agent": UA }, signal: AbortSignal.timeout(20000) });
+        if (r.ok) lists.push((await r.json()).photos.map((p) => ({
+          url: p.src?.large2x || p.src?.large || p.src?.original,
+          w: p.width,
+          h: p.height,
+          title: `${p.alt || ""} ${p.photographer || ""}`,
+          credit: `Photo by ${p.photographer} on Pexels`,
+        })).filter((x) => x.url));
+        else log(`pexels ${r.status}`);
+      } catch (e) { log(`pexels ${e.message}`); }
+    }
+    if (!openverseBlocked) {
+      try {
+        const u = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(q)}&license=cc0,pdm&category=photograph&page_size=20&mature=false${aspect ? `&aspect_ratio=${aspect}` : ""}`;
+        const r = await fetch(u, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(20000) });
+        if (r.status === 403 || r.status === 429) { openverseBlocked = true; log(`openverse ${r.status}; using Wikimedia Commons only`); }
+        else if (r.ok) lists.push((await r.json()).results.map((x) => ({ url: x.url, w: x.width, h: x.height, title: `${x.title} ${(x.tags || []).map((t) => t.name).join(" ")}`, credit: `${x.title || "Photo"}${x.creator ? ` by ${x.creator}` : ""}, ${String(x.license).toUpperCase()} via Openverse` })));
+        else log(`openverse ${r.status}`);
+      } catch (e) { log(`openverse ${e.message}`); }
+    }
+    try {
+      const u = `https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrnamespace=6&gsrlimit=30&gsrsearch=${encodeURIComponent(q + " filetype:bitmap filemime:jpeg")}&prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth=1600`;
+      const r = await fetch(u, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(20000) });
+      if (r.ok) {
+        const pages = Object.values((await r.json()).query?.pages || {});
+        lists.push(pages.map((p) => ({ p, ii: p.imageinfo?.[0] })).filter(({ ii }) => ii && /^(cc0|public domain|pd)/i.test(ii.extmetadata?.LicenseShortName?.value || ""))
+          .map(({ p, ii }) => ({ url: ii.thumburl || ii.url, w: ii.width, h: ii.height, title: `${p.title} ${(ii.extmetadata?.ImageDescription?.value || "").replace(/<[^>]+>/g, "").slice(0, 200)}`, credit: `${p.title.replace(/^File:/, "").replace(/\.\w+$/, "")}, ${ii.extmetadata.LicenseShortName.value}, Wikimedia Commons` })));
+      }
+    } catch (e) { log(`commons ${e.message}`); }
+    for (const x of lists.flat()) {
+      if (out.length >= n) break;
+      if (!x.url || usedImages.has(x.url) || usedImages.has(x.pageURL) || (x.sourceId && usedImages.has(`pixabay:${x.sourceId}`)) || out.some((o) => o.url === x.url) || JUNK.test(x.title) || Math.min(x.w || 0, x.h || 0) < 600) continue;
+      try {
+        const r = await fetch(x.url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(30000) });
+        if (!r.ok) continue;
+        const buf = Buffer.from(await r.arrayBuffer());
+        const meta = await sharp(buf).metadata();
+        if (!meta.width || Math.min(meta.width, meta.height) < 540) continue;
+        if (await bufferLooksUsed(buf)) continue;
+        const thumb = await sharp(buf).rotate().resize(320, 320, { fit: "inside" }).jpeg({ quality: 60 }).toBuffer();
+        out.push({ ...x, buf, thumb });
+      } catch { /* next */ }
+    }
+    if (out.length >= n) break;
+  }
+  return out;
+}
+// One Gemini vision call picks a fitting photo for every slot (or none).
+async function pickImages(slots) {
+  const parts = [];
+  let text = "Pick photos for a US truck-dispatch article. For each slot below, choose the ONE candidate that is a real photograph clearly showing the described scene (or very close). Reject drawings, posters, scans, documents, specimens, religious or political imagery, close-up faces of identifiable people, images with visible text or logos, and anything off-topic. If no candidate fits, answer -1. Never pick the same candidate for two slots.\n";
+  let k = 0;
+  for (const s of slots) {
+    text += `\nSLOT ${s.key}: "${s.want}". Candidates: ${s.cands.map((c) => { c.id = k++; return `#${c.id}`; }).join(", ") || "none"}`;
+    for (const c of s.cands) parts.push({ text: `Candidate #${c.id}:` }, { inline_data: { mime_type: "image/jpeg", data: c.thumb.toString("base64") } });
+  }
+  text += `\n\nReturn JSON {"picks": {"<slot key>": <candidate number or -1>}}`;
+  if (FORCE_PROVIDER === "groq" || GEMINI_DEAD || !KEY) {
+    log("image pick skipped (Gemini vision unavailable); using first unused candidate");
+    return {};
+  }
+  try {
+    const { out } = await gemini(text, { temperature: 0, models: LITE, parts });
+    return out.picks || {};
+  } catch (e) { log(`image pick failed: ${e.message}`); return {}; }
+}
+async function portrait(buf, out, contain = false) {
+  mkdirSync(dirname(out), { recursive: true });
+  if (!contain) return sharp(buf).rotate().resize(720, 960, { fit: "cover", position: "attention" }).webp({ quality: 72 }).toFile(out);
+  const bg = await sharp(buf).rotate().resize(720, 960, { fit: "cover" }).blur(30).modulate({ brightness: 0.85 }).toBuffer();
+  const fg = await sharp(buf).rotate().resize(680, 900, { fit: "inside" }).toBuffer();
+  return sharp(bg).composite([{ input: fg, gravity: "centre" }]).webp({ quality: 74 }).toFile(out);
+}
+
+// ---------- writing an article ----------
+function frontMatter(a, item, wc, heroCredit, storyPages) {
+  const silo = silos.find((s) => s.slug === item.silo);
+  const tocMap = new Map((a.toc || []).map((t) => [t.heading.trim(), t.label]));
+  const toc = [...a.body.matchAll(/^## (.+)$/gm)].map((m) => ({ id: slugify(m[1].trim()), label: tocMap.get(m[1].trim()) || m[1].trim() }));
+  toc.push({ id: "sources", label: "Sources" });
+  const fm = {
+    layout: "layouts/article.njk", tags: "guide", title: a.title, metaTitle: a.metaTitle, description: a.description, dek: a.dek,
+    silo: item.silo, siloName: silo ? silo.name : item.silo, date: TODAY, updated: TODAY, readTime: `${Math.max(4, Math.round(wc / 200))} min read`,
+    hero: `/assets/images/guide-${a.slug}`, heroHeight: 900, heroAlt: a.heroAlt, heroCaption: heroCredit.startsWith("Dispatch Cove") ? "Illustration by Dispatch Cove." : `Stock photo: ${heroCredit}`,
+    ogImage: `/assets/images/guide-${a.slug}-1600.webp`, ogAlt: a.heroAlt, permalink: `/${item.silo}/${a.slug}/`,
+    related: a.related.slice(0, 3), toc, faq: a.faq.map((f) => ({ q: f.q, a: f.a })),
+    autowriter: { provider: a._provider || "gemini", model: a._model, queueId: item.id },
+  };
+  if (ENABLE_STORIES) fm.story = { slug: a.slug, ...(item.product ? { product: item.product } : {}), pages: storyPages };
+  return yaml.dump(fm, { lineWidth: -1, noRefs: true, quotingType: '"' }).replace(/^(date|updated): ["']?(\d{4}-\d\d-\d\d)["']?$/gm, "$1: $2");
+}
+
+const GROQ_DRAFT_HINT = `
+CRITICAL FOR THIS DRAFT:
+- The "body" field MUST be 1,350-1,650 words of markdown. Count the words before you return. A short body will be rejected.
+- Do not put "## Sources", "## FAQ", or "## Frequently asked questions" in the body; those belong in the faq and sources JSON fields.
+- Include at least one ### heading, 5+ ## sections, and open with "## The short answer" followed by a 40-60 word paragraph.
+- "faq" must have 4-6 items as a top-level JSON field (not a body section). Do not include a story field.
+- "description" must be 140-160 characters.
+- If a product is provided, include the exact {% product "..." %} line once and at least two in-sentence affiliate Markdown CTAs.
+- Include 3-6 in-sentence internal links to existing article URLs from the list.
+`;
+
+async function draft(item, existing, feedback, provider) {
+  let prompt = buildPrompt(item, existing, feedback);
+  if (provider === "groq" || FORCE_PROVIDER === "groq") prompt += GROQ_DRAFT_HINT;
+  const { provider: usedProvider, model, out } = process.env.AW_FAKE_DRAFT
+    ? { provider: "fake", model: "fake", out: JSON.parse(readFileSync(process.env.AW_FAKE_DRAFT, "utf8")) }
+    : await complete(prompt, { provider, reasoning: provider === "groq" ? "medium" : undefined });
+  out._provider = usedProvider;
+  out._model = model;
+  out.slug = slugify(out.slug || out.title || item.topic);
+  out.related = (out.related || []).filter((r) => existing.some((g) => g.url === r.href));
+  // verify sources; unlink any failing or non-authority URL
+  const okSources = [];
+  for (const s of (out.sources || []).slice(0, 6)) {
+    if (okSources.length >= 3) break;
+    let host = ""; try { host = new URL(s.url).hostname; } catch {}
+    const allowed = host && !BANNED_HOST.test(host) && !AFFIL_HOSTS.some((h) => host.endsWith(h));
+    if (allowed && await urlOk(s.url)) { if (new URL(s.url).pathname.replace(/\/+$/, "") === "") s.name = String(s.name).split(",")[0] + " (home page)"; okSources.push(s); } else log(`dropping source ${s.url}`);
+  }
+  out.sources = okSources;
+  const okSet = new Set(okSources.map((s) => s.url));
+  out.body = String(out.body || "").replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (m, t, u) => (okSet.has(u) ? m : t));
+  return out;
+}
+
+async function rescueSources(a) {
+  log("no source verified; asking for replacement sources");
+  try {
+    const { out } = await complete(`For a US truck-dispatch article titled "${a.title}" (${a.description}), list 8 real, stable, neutral authority web pages (specific pages, not home pages) (US .gov such as FMCSA, official agency pages, or official vendor documentation) that support general advice in it. Prefer top-level pages that certainly exist. Return JSON {"sources":[{"name":"Publisher, page title","url":"https://...","note":"one sentence on what it supports"}]}`, { temperature: 0.2, models: LITE });
+    const ok = [];
+    for (const s of out.sources || []) {
+      if (ok.length >= 2) break;
+      let host = ""; try { host = new URL(s.url).hostname; } catch {}
+      if (host && new URL(s.url).pathname.replace(/\/+$/, "") !== "" && !BANNED_HOST.test(host) && await urlOk(s.url)) ok.push(s);
+    }
+    return ok;
+  } catch (e) { log(`rescue failed: ${e.message}`); return []; }
+}
+
+async function repairDraft(a, errs, item, existing, provider) {
+  log(`repairing ${provider} draft (${errs.length} checks)`);
+  const prompt = `You previously wrote a Dispatch Cove article as JSON. It failed these quality checks:
+- ${errs.join("\n- ")}
+
+Return the COMPLETE corrected JSON with the same schema (title, metaTitle, description, dek, slug, readTimeNote, heroQuery, heroAlt, midImageSection, midImageQuery, midImageAlt, body, toc, faq, sources, related).
+Rules: "body" MUST be 1,350-1,650 words of markdown (count them). Remove any "## Sources" or "## FAQ" section from the body; keep faq (4-6 items) and sources as JSON fields. description must be 140-160 characters. The first paragraph after "## The short answer" must be 40-60 words. Keep existing internal links and affiliate CTAs, and add any that are missing. ${item.product ? `Keep the exact line {% product "${item.product}" %} once, and in-sentence CTAs to ${PRODUCTS[item.product]?.href || "the product URL"}.` : "Do not add a product shortcode."}
+${provider === "groq" || FORCE_PROVIDER === "groq" ? GROQ_DRAFT_HINT : ""}
+
+PREVIOUS JSON:
+${JSON.stringify({ ...a, _model: undefined, _provider: undefined, _imageReport: undefined })}
+`;
+  const { provider: usedProvider, model, out } = await complete(prompt, { provider, temperature: 0.5, reasoning: provider === "groq" ? "medium" : undefined });
+  const merged = { ...a, ...out, _provider: usedProvider, _model: model, slug: slugify(out.slug || a.slug || item.topic) };
+  if (!Array.isArray(merged.sources) || !merged.sources.length) merged.sources = a.sources || [];
+  return merged;
+}
+
+async function draftPassing(item, existing, feedback, provider) {
+  log(`drafting with ${provider}`);
+  let a = await draft(item, existing, feedback, provider);
+  a = autoFix(a, { product: item.product, existing });
+  let errs = checkArticle(a, { product: item.product, existing });
+  if (!a.sources.length) a.sources = await rescueSources(a);
+  if (!a.sources.length) errs.push("none of your source URLs returned HTTP 200; give real, stable .gov/.edu/manufacturer URLs");
+  if (errs.length) {
+    log(`draft 1 issues (${provider}): ${errs.join(" | ")}`);
+    try {
+      a = await repairDraft(a, errs, item, existing, provider);
+      a = autoFix(a, { product: item.product, existing });
+      errs = checkArticle(a, { product: item.product, existing });
+      if (!a.sources.length) a.sources = await rescueSources(a);
+      if (!a.sources.length) errs.push("no verified sources");
+    } catch (e) {
+      log(`repair failed (${provider}): ${e.message}`);
+    }
+  }
+  if (errs.length) {
+    log(`repair still has issues (${provider}): ${errs.join(" | ")}; doing a full redraft`);
+    a = await draft(item, existing, errs, provider);
+    a = autoFix(a, { product: item.product, existing });
+    errs = checkArticle(a, { product: item.product, existing });
+    if (!a.sources.length) a.sources = await rescueSources(a);
+    if (!a.sources.length) errs.push("no verified sources");
+    if (errs.length) throw new Error(`draft 2 still fails (${provider}): ${errs.join(" | ")}`);
+  }
+  return a;
+}
+
+async function writeArticle(item, existing) {
+  const providers = writerProviders();
+  if (!providers.length) throw Object.assign(new Error("No article writer available (need GEMINI_API_KEY or GROQ_API_KEY)"), { fatal: true });
+  let a;
+  let lastDraftErr;
+  const initialFeedback = item._buildError ? [`The site build failed on the last try; avoid whatever caused this: ${item._buildError.slice(-1200)}`] : undefined;
+  for (const provider of providers) {
+    try {
+      a = await draftPassing(item, existing, initialFeedback, provider);
+      log(`accepted draft from ${a._provider} / ${a._model}`);
+      break;
+    } catch (e) {
+      lastDraftErr = e;
+      log(`${provider} did not produce a passing draft: ${e.message}`);
+      if (e.fatal && !writerProviders().filter((p) => p !== provider).length) throw e;
+    }
+  }
+  if (!a) throw lastDraftErr || new Error("no provider produced a passing draft");
+  // images
+  const imgDir = join(SRC, "assets", "images");
+  const product = item.product ? PRODUCTS[item.product] : null;
+  const productImgs = product ? [product.image, ...(product.storyImages || [])] : [];
+  const midProducerFile = producerMidPath(product);
+  const midQuery = a.midImageQuery || a.heroQuery;
+  let midPixabay = null;
+  if (!midProducerFile) midPixabay = await pixabayMidImage(midQuery);
+  const slots = [{ key: "hero", want: a.heroAlt || a.heroQuery, cands: await candidates(a.heroQuery, "wide") }];
+  for (const c of slots[0].cands) usedImages.add(c.url);
+  for (const [i, card] of (ENABLE_STORIES ? a.story || [] : []).entries()) {
+    if (card.kind === "product" && productImgs.length) continue;
+    const cands = await candidates(card.imageQuery || a.heroQuery, "tall", 3);
+    for (const c of cands) usedImages.add(c.url);
+    slots.push({ key: `card${i + 1}`, want: card.alt || card.imageQuery, cands });
+  }
+  if (!midProducerFile && !midPixabay) {
+    const midCands = await candidates(midQuery, "wide", 4, { skipPixabay: true });
+    for (const c of midCands) usedImages.add(c.url);
+    slots.push({ key: "mid", want: a.midImageAlt || midQuery, cands: midCands });
+  }
+  const picks = await pickImages(slots);
+  const chosen = {};
+  const taken = new Set();
+  for (const s of slots) {
+    const c = s.cands.find((x) => x.id === Number(picks[s.key]));
+    if (c && !taken.has(c.url)) { chosen[s.key] = c; taken.add(c.url); }
+  }
+  const silo = silos.find((x) => x.slug === item.silo);
+  const fallbacks = [silo?.image, "/assets/images/hero-home", "/assets/images/shelf-getting-started", "/assets/images/shelf-load-boards", "/assets/images/shelf-software", "/assets/images/shelf-owner-operators"].filter(Boolean)
+    .map((b) => srcAsset(b, "-1600.webp")).filter((f, i, arr) => arr.indexOf(f) === i && existsSync(f));
+  const unusedFallbacks = [];
+  let fb = 0;
+  for (const f of fallbacks) {
+    if (!(await bufferLooksUsed(readFileSync(f)))) unusedFallbacks.push(f);
+  }
+  const heroTries = [];
+  if (chosen.hero) heroTries.push(chosen.hero);
+  for (const c of (slots[0].cands || [])) {
+    if (c && !heroTries.includes(c)) heroTries.push(c);
+  }
+  let hero = null;
+  for (const c of heroTries) {
+    if (!c?.buf) continue;
+    if (await bufferLooksUsed(c.buf)) {
+      log(`hero candidate skipped, already used: ${c.pageURL || c.url || "stock"}`);
+      continue;
+    }
+    hero = c;
+    break;
+  }
+  if (!hero && unusedFallbacks.length) {
+    hero = { buf: readFileSync(unusedFallbacks.shift()), credit: "Dispatch Cove illustration", house: true };
+  }
+  if (!hero) throw new Error("no unused hero image available (stock and site illustrations already used)");
+  for (const w of [1600, 800]) {
+    await heroSharp(hero.buf, w).toFile(join(imgDir, `guide-${a.slug}-${w}.webp`));
+  }
+  await rememberHero({
+    slug: a.slug,
+    file: join(imgDir, `guide-${a.slug}-1600.webp`),
+    buf: readFileSync(join(imgDir, `guide-${a.slug}-1600.webp`)),
+    sourceUrl: hero.pageURL || "",
+    sourceId: hero.sourceId || pixabayId(hero.pageURL),
+  });
+  const imageReport = [`hero: ${hero.house ? "site illustration (no fitting stock photo)" : "stock photo"}`];
+  const storyPages = [];
+  const tones = ["ink", "moss"];
+  for (const [i, card] of (ENABLE_STORIES ? a.story || [] : []).entries()) {
+    const out = join(imgDir, "stories", a.slug, `p${i + 1}.webp`);
+    let alt = card.alt;
+    if (card.kind === "product" && productImgs.length) {
+      await portrait(readFileSync(join(SRC, productImgs.shift())), out, true);
+      alt = `Seller photo: ${product.name}. ${product.alt || ""}`.trim();
+      imageReport.push(`card ${i + 1}: seller photo`);
+    } else if (chosen[`card${i + 1}`]) {
+      await portrait(chosen[`card${i + 1}`].buf, out);
+      imageReport.push(`card ${i + 1}: stock photo`);
+    } else {
+      const f = fallbacks[fb++ % fallbacks.length];
+      await portrait(readFileSync(f), out, true);
+      alt = "Photograph related to truck dispatch work";
+      imageReport.push(`card ${i + 1}: site illustration (no fitting stock photo)`);
+    }
+    storyPages.push({ id: slugify(card.id || `card-${i + 1}`) || `card-${i + 1}`, title: card.title, text: card.text, image: `/assets/images/stories/${a.slug}/p${i + 1}.webp`, imageWidth: 720, imageHeight: 960, alt, tone: tones[i % 2] });
+  }
+  const wc = words(a.body);
+  let mid = null;
+  if (midProducerFile) {
+    mid = { buf: readFileSync(midProducerFile), credit: product.caption || "Seller photo.", product, source: "producer photo" };
+  } else if (midPixabay) {
+    mid = midPixabay;
+  } else if (chosen.mid) {
+    mid = { ...chosen.mid, source: "stock photo" };
+  } else if (fallbacks.length) {
+    mid = unusedFallbacks.length
+      ? { buf: readFileSync(unusedFallbacks.shift()), credit: "Dispatch Cove illustration", house: true, source: "site illustration (no fitting stock photo)" }
+      : null;
+  }
+  if (mid && await bufferLooksUsed(mid.buf)) {
+    log(`mid image skipped, matches an existing hero`);
+    mid = null;
+  }
+  if (mid) {
+    const alt = a.midImageAlt || (mid.product && product.alt) || a.heroAlt || "Photograph illustrating this guide";
+    if (mid.pixabay) {
+      const dir = join(imgDir, "articles");
+      mkdirSync(dir, { recursive: true });
+      const jpg = await jpegUnder(mid.buf);
+      writeFileSync(join(dir, `${a.slug}.jpg`), jpg);
+      const meta = await sharp(jpg).metadata();
+      const page = mid.pageURL || "https://pixabay.com/";
+      a.body = insertMidImage(a.body, midFigureHtml({
+        src: `/assets/images/articles/${a.slug}.jpg`,
+        alt,
+        width: meta.width,
+        height: meta.height,
+        captionHtml: `Photo: <a href="${esc(page)}" rel="nofollow noopener" target="_blank">Pixabay</a>`,
+      }), a.midImageSection);
+      imageReport.push(`mid-article: Pixabay (${page})`);
+    } else {
+      const midBase = `guide-${a.slug}-mid`;
+      const midH = Math.round((1600 * 9) / 16);
+      const fit = mid.product || mid.house ? "contain" : "cover";
+      for (const w of [1600, 800]) {
+        await sharp(mid.buf).rotate().resize(w, Math.round((w * 9) / 16), {
+          fit,
+          position: "attention",
+          background: { r: 247, g: 243, b: 234, alpha: 1 },
+        }).webp({ quality: 72 }).toFile(join(imgDir, `${midBase}-${w}.webp`));
+      }
+      const caption = mid.product
+        ? (product.caption || "Seller photo.")
+        : (mid.house || String(mid.credit || "").startsWith("Dispatch Cove"))
+          ? "Illustration by Dispatch Cove."
+          : `Stock photo: ${mid.credit}`;
+      a.body = insertMidImage(a.body, midFigureHtml({
+        src800: `/assets/images/${midBase}-800.webp`,
+        src1600: `/assets/images/${midBase}-1600.webp`,
+        alt,
+        width: 1600,
+        height: midH,
+        caption,
+        product: mid.product || null,
+      }), a.midImageSection);
+      imageReport.push(`mid-article: ${mid.source}`);
+    }
+  }
+  a._imageReport = imageReport;
+  if (hero.house) a.heroAlt = silo?.alt || "Photograph related to truck dispatch work";
+  if (ENABLE_STORIES && storyPages.length) {
+    await sharp(join(imgDir, "stories", a.slug, "p1.webp")).toFile(join(imgDir, "stories", `${a.slug}.webp`));
+  }
+  // body + sources section
+  const sourcesNote = item.product ? "\n\nProduct details come from the seller's page and can change.\n" : "\n";
+  const sourcesMd = `## Sources\n\n${a.sources.map((s) => `- [${s.name}](${s.url}). ${s.note}`).join("\n")}${sourcesNote}`;
+  const md = `---\n${frontMatter(a, item, wc, hero.credit, storyPages)}---\n\n${a.body.trim()}\n\n${sourcesMd}`;
+  const dir = join(SRC, item.silo);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${a.slug}.md`), md);
+  const internal = new Set(mdLinks(a.body).filter((l) => l.href.startsWith("/")).map((l) => l.href)).size;
+  return { a, url: `/${item.silo}/${a.slug}/`, file: join(dir, `${a.slug}.md`), wc, internal };
+}
+
+// ---------- backlinks from older articles ----------
+async function addBacklinks(newUrl, a, existing) {
+  const cands = [];
+  for (const g of existing) {
+    if (g.raw.includes(`](${newUrl})`)) continue;
+    const paras = g.body.split("\n").map((t, i) => ({ i, t })).filter((p) => p.t.length > 120 && !/^(#|-|\*|\{%|\||>|\d+\.|<)/.test(p.t) && (p.t.match(/\]\(/g) || []).length < 2);
+    for (const p of paras.slice(0, 8)) cands.push({ file: g.file.slice(ROOT.length + 1), line: p.i, text: p.t });
+  }
+  if (!cands.length) return [];
+  const prompt = `A new article was published: "${a.title}" at ${newUrl}. Summary: ${a.description}
+From the paragraphs below (from OTHER articles on the same site), pick up to 3 where a reader would genuinely benefit from a link to the new article. For each, return an EXACT phrase copied character-for-character from that paragraph (2-7 words, not already inside [...](...), not a heading) that naturally describes the new article's topic. At most one per file. If nothing fits naturally, return fewer or none. Do not rewrite anything.
+Return JSON: {"links":[{"file":"","line":0,"phrase":""}]}
+PARAGRAPHS:
+${cands.map((c) => JSON.stringify(c)).join("\n")}`;
+  let out;
+  try { out = (await complete(prompt, { temperature: 0.2, models: LITE })).out; } catch (e) { log(`backlink call failed: ${e.message}`); return []; }
+  const done = [];
+  const seen = new Set();
+  for (const l of (out.links || []).slice(0, 3)) {
+    const c = cands.find((x) => x.file === l.file && x.line === l.line);
+    const phrase = String(l.phrase || "");
+    if (!c || seen.has(c.file) || phrase.split(/\s+/).length < 2 || phrase.split(/\s+/).length > 8) continue;
+    const idx = c.text.indexOf(phrase);
+    if (idx < 0 || c.text.indexOf(phrase, idx + 1) >= 0) continue;
+    const inLink = mdLinks(c.text).some((m) => idx < m.index + m.full.length && idx + phrase.length > m.index);
+    if (inLink) continue;
+    const path = join(ROOT, c.file);
+    const raw = readFileSync(path, "utf8");
+    if (raw.split(c.text).length !== 2) continue;
+    const newText = c.text.slice(0, idx) + `[${phrase}](${newUrl})` + c.text.slice(idx + phrase.length);
+    writeFileSync(path, raw.replace(c.text, () => newText));
+    seen.add(c.file);
+    done.push({ file: c.file, phrase });
+  }
+  return done;
+}
+
+function removeSoon(topic) {
+  const p = join(SRC, "_data", "silos.js");
+  const raw = readFileSync(p, "utf8");
+  const lines = raw.split("\n").filter((l) => l.trim() !== `${JSON.stringify(topic)},` && l.trim() !== JSON.stringify(topic));
+  writeFileSync(p, lines.join("\n"));
+}
+
+function build() {
+  try { sh("npx eleventy --quiet && node scripts/check-site.js"); return null; }
+  catch (e) { return `${e.stdout || ""}\n${e.stderr || ""}`.trim().slice(-3000); }
+}
+
+// ---------- main ----------
+if (TEST_PIXABAY) {
+  const query = process.argv.slice(3).join(" ").trim() || "garden hose";
+  if (!PIXABAY) { console.error("PIXABAY_API_KEY is missing"); process.exit(1); }
+  log(`pixabay dry run, query: ${query}`);
+  const hit = await pixabayMidImage(query);
+  if (!hit) { console.error("No Pixabay photo found"); process.exit(1); }
+  const tmp = mkdtempSync(join(tmpdir(), "pixabay-test-"));
+  const jpg = await jpegUnder(hit.buf);
+  const dest = join(tmp, "sample.jpg");
+  writeFileSync(dest, jpg);
+  const meta = await sharp(jpg).metadata();
+  console.log(JSON.stringify({
+    query,
+    pageURL: hit.pageURL,
+    tags: hit.tags,
+    sourceWidth: hit.w,
+    sourceHeight: hit.h,
+    output: dest,
+    outputWidth: meta.width,
+    outputHeight: meta.height,
+    bytes: jpg.length,
+  }, null, 2));
+  process.exit(0);
+}
+
+loadHeroRegistry();
+await fillHeroDhashes();
+await indexPublishedImages();
+writeHeroRegistry();
+const queue = JSON.parse(readFileSync(QUEUE, "utf8"));
+const results = [];
+let made = 0;
+let fatalStop = "";
+log(`writers ready: gemini=${KEY ? "yes" : "no"} groq=${GROQ_KEY ? "yes" : "no"} force=${FORCE_PROVIDER || "off"} groqModels=${GROQ_MODELS.join(",")} groqTpm=${GROQ_TPM}`);
+let itemsStarted = 0;
+const maxStart = FORCE_PROVIDER === "groq" || !KEY ? COUNT : COUNT + 2;
+for (const item of queue.items) {
+  if (made >= COUNT) break;
+  if (fatalStop) { log("stopping run: " + fatalStop); break; }
+  if (GROQ_DEAD && (FORCE_PROVIDER === "groq" || !KEY || GEMINI_DEAD)) {
+    log("stopping run: Groq rate-limited, " + GROQ_DEAD);
+    break;
+  }
+  if (item.status !== "todo") continue;
+  if ((process.env.SKIP_IDS || "").split(",").includes(item.id)) { log(`skip ${item.id}: already drafted in an open PR`); continue; }
+  if (item.demand?.level === "none") { log(`skip ${item.id}: no search demand and no usable on-topic variant`); continue; }
+  if (item.product && !PRODUCTS[item.product]) { log(`skip ${item.id}: product ${item.product} is not in products.js`); continue; }
+  if (itemsStarted >= maxStart) {
+    log(`stopping after ${itemsStarted} attempted topic(s); not walking the rest of the queue`);
+    break;
+  }
+  itemsStarted++;
+  log(`writing ${item.id}: ${item.topic}`);
+  let ok = false;
+  let attemptNote = null;
+  for (let attempt = 0; attempt < 2 && !ok && !fatalStop; attempt++) {
+    try {
+      const existing = guides();
+      if (attemptNote) item._buildError = attemptNote;
+      const r = await writeArticle(item, existing);
+      const backs = await addBacklinks(r.url, r.a, existing);
+      removeSoon(item.topic);
+      const err = build();
+      if (err) throw Object.assign(new Error("build failed"), { buildLog: err });
+      item.status = "done"; item.slug = r.a.slug; item.url = r.url; item.date = TODAY; delete item._buildError;
+      writeFileSync(QUEUE, `{\n  "_readme": ${JSON.stringify(queue._readme)},\n  "items": [\n${queue.items.map((x) => `    ${JSON.stringify(x)}`).join(",\n")}\n  ]\n}\n`);
+      sh(`git add -A src scripts/autowriter/queue.json scripts/autowriter/hero-registry.json && git commit -q -m ${JSON.stringify(`Autowriter: ${r.a.title}`)}`);
+      results.push({ ...r, backs, provider: r.a._provider, model: r.a._model, sources: r.a.sources.length, images: r.a._imageReport });
+      made++; ok = true;
+      log(`done ${r.url} via ${r.a._provider}/${r.a._model} (${r.wc} words, ${r.internal} internal links, ${backs.length} backlinks)`);
+    } catch (e) {
+      log(`attempt ${attempt + 1} failed for ${item.id}: ${e.message}${e.buildLog ? `\n${e.buildLog}` : ""}`);
+      attemptNote = e.buildLog || e.message;
+      if (e.fatal) fatalStop = e.message;
+      sh("git checkout -q -- src scripts/autowriter/queue.json scripts/autowriter/hero-registry.json && git clean -fdq src");
+      usedImages.clear();
+      loadHeroRegistry();
+      await fillHeroDhashes();
+      await indexPublishedImages();
+    }
+  }
+  if (!ok) results.push({ failed: item.id, topic: item.topic, reason: String(attemptNote).slice(0, 300) });
+}
+
+const lines = [`## Autowriter run ${TODAY}`, "", "Drafts written with Gemini (primary) or Groq (fallback). **Review and edit before merging.** Nothing here is merged automatically.", "",
+  "| Article | Words | In-text internal links | Backlinks added | Verified sources | Provider | Model |", "|---|---|---|---|---|---|---|"];
+for (const r of results.filter((x) => !x.failed)) {
+  lines.push(`| [${r.a.title}](https://dispatchcove.com${r.url}) (\`${r.file.slice(ROOT.length + 1)}\`) | ${r.wc} | ${r.internal} | ${r.backs.length} | ${r.sources} | ${r.provider} | ${r.model} |`);
+}
+for (const r of results.filter((x) => x.failed)) lines.push("", `Skipped **${r.topic}** (${r.failed}): ${r.reason.replace(/\n/g, " ")}`);
+const imgLines = results.filter((r) => r.images).map((r) => `- ${r.a.title}: ${r.images.join("; ")}`);
+if (imgLines.length) lines.push("", "### Images", ...imgLines);
+const backs = results.flatMap((r) => (r.backs || []).map((b) => `- ${b.file}: linked “${b.phrase}” → ${r.url}`));
+if (backs.length) lines.push("", "### Backlinks inserted in older articles", ...backs);
+lines.push("", "Checklist: read for accuracy, confirm no invented specs or prices, then merge.");
+writeFileSync(SUMMARY, lines.join("\n") + "\n");
+if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `made=${made}\n`);
+log(`made ${made} article(s)`);

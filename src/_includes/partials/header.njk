@@ -1,0 +1,27 @@
+<a class="skip" href="#main">Skip to content</a>
+<header class="mast">
+  <div class="mast-inner">
+    <a class="brand" href="/">
+      <span class="brand-mark" aria-hidden="true">DC</span>
+      <span>Dispatch Cove</span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    {% if section %}
+      {% set navActive = section %}
+    {% elif shelf.slug %}
+      {% set navActive = shelf.slug %}
+    {% elif silo %}
+      {% set navActive = silo %}
+    {% else %}
+      {% set navActive = "" %}
+    {% endif %}
+    <nav id="site-nav" class="nav" aria-label="Primary">
+      <a href="/getting-started/" {% if navActive == "getting-started" %}aria-current="page"{% endif %}>Getting Started</a>
+      <a href="/load-boards/" {% if navActive == "load-boards" %}aria-current="page"{% endif %}>Load Boards</a>
+      <a href="/factoring/" {% if navActive == "factoring" %}aria-current="page"{% endif %}>Factoring</a>
+      <a href="/software/" {% if navActive == "software" %}aria-current="page"{% endif %}>Software</a>
+      <a href="/owner-operators/" {% if navActive == "owner-operators" %}aria-current="page"{% endif %}>Owner-Operators</a>
+      <a href="/about/" {% if navActive == "about" %}aria-current="page"{% endif %}>About</a>
+    </nav>
+  </div>
+</header>

@@ -1,0 +1,44 @@
+---
+layout: layouts/base.njk
+title: Contact
+metaTitle: Contact Dispatch Cove
+description: Contact Dispatch Cove, operated by Etern Digital. We answer questions about the site. Accounts, funding, and refunds belong to the company that sold the service.
+date: 2026-11-26
+updated: 2026-11-26
+permalink: /contact/
+---
+<main id="main" class="wrap page-hero prose">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    <ol>
+      <li><a href="/">Home</a></li>
+      <li aria-current="page">Contact</li>
+    </ol>
+  </nav>
+  <h1>Contact</h1>
+  <p class="dek">Write to the desk about the site. Write to the seller about an account or a payment.</p>
+  <p><strong>Company:</strong> Etern Digital</p>
+  <p><strong>Website:</strong> <a href="https://dispatchcove.com/">dispatchcove.com</a></p>
+  <p><strong>Email:</strong> <a href="mailto:{{ site.email }}">{{ site.email }}</a></p>
+  <h2>How we can help</h2>
+  <ul>
+    <li>Questions about the guides and the site.</li>
+    <li>Affiliate and business inquiries.</li>
+    <li>Corrections to something we published.</li>
+    <li>Copyright or privacy requests.</li>
+  </ul>
+  <p>We try to answer legitimate notes within 48 to 72 business hours.</p>
+  <h2>Accounts, funding, and refunds</h2>
+  <p>Dispatch Cove does not sell the factoring programs, load-board subscriptions, or software mentioned in the guides. We do not take payment, fund invoices, or keep a vendor’s account records. If a purchase, a fee, or a funded invoice is in dispute, contact that company. We cannot look up the transaction or issue a refund.</p>
+  <h2>Privacy of your email</h2>
+  <p>If you email us, we use that address to reply. Please do not send passwords, full payment card numbers, or other sensitive financial information.</p>
+</main>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": "{{ site.url }}/" },
+    { "@type": "ListItem", "position": 2, "name": "Contact", "item": "{{ site.url }}/contact/" }
+  ]
+}
+</script>

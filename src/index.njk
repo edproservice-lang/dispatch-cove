@@ -1,0 +1,108 @@
+---
+layout: layouts/base.njk
+title: Practical guides for truck dispatchers and owner-operators
+metaTitle: Dispatch Cove — Guides for U.S. Truck Dispatchers
+description: Practical guides for U.S. truck dispatchers and owner-operators, covering load boards, freight factoring, dispatch software, and how to start a dispatch business.
+date: 2026-11-26
+updated: 2026-11-26
+lcp: /assets/images/hero-home
+lcpSizes: "(min-width: 960px) 42rem, calc(100vw - 2.5rem)"
+ogImage: /assets/images/og.jpg
+ogAlt: A white semi-truck on a U.S. highway, representing freight dispatch work.
+permalink: /
+---
+<main id="main">
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">Dispatch &amp; freight · United States</p>
+        <h1>{{ title }}</h1>
+        <p class="dek">Dispatch Cove explains the work in plain English: how to book freight, how load boards and factoring actually operate, and where a tool or a service fits. A product shows up only when it belongs, and the link is labeled as an ad.</p>
+        <p class="meta-row"><span>Five shelves</span><span>Three starter guides</span><span>No invented tests</span></p>
+      </div>
+      <figure class="frame">
+        <img
+          src="/assets/images/hero-home-800.webp"
+          srcset="/assets/images/hero-home-800.webp 800w, /assets/images/hero-home-1600.webp 1600w"
+          sizes="(min-width: 960px) 42rem, calc(100vw - 2.5rem)"
+          alt="A white semi-truck traveling on a U.S. highway under a clear sky"
+          width="1600"
+          height="900"
+          fetchpriority="high"
+          decoding="async">
+        <figcaption>Photo by rgaudet17 on Pixabay.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" aria-labelledby="shelves-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="shelves-title">The five shelves</h2>
+      </div>
+      <div class="shelf">
+        {% for shelf in silos %}
+        <a class="shelf-card" href="/{{ shelf.slug }}/">
+          <img
+            src="{{ shelf.image }}-800.webp"
+            srcset="{{ shelf.image }}-800.webp 800w, {{ shelf.image }}-1600.webp 1600w"
+            sizes="(min-width: 1040px) 16rem, (min-width: 700px) 45vw, calc(100vw - 2.5rem)"
+            alt=""
+            width="{{ shelf.width }}"
+            height="{{ shelf.height }}"
+            loading="lazy"
+            decoding="async">
+          <div>
+            <p class="kicker">Shelf {{ shelf.number }}</p>
+            <h2>{{ shelf.name }}</h2>
+            <p>{{ shelf.summary }}</p>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="band" aria-labelledby="guides-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="guides-title">From the cove</h2>
+      </div>
+      <div class="guide-grid">
+        {% for post in collections.guide %}
+        <a class="guide-card" href="{{ post.url }}">
+          <img
+            src="{{ post.data.hero }}-800.webp"
+            srcset="{{ post.data.hero }}-800.webp 800w, {{ post.data.hero }}-1600.webp 1600w"
+            sizes="(min-width: 700px) 34rem, calc(100vw - 2.5rem)"
+            alt=""
+            width="1600"
+            height="{{ post.data.heroHeight }}"
+            loading="lazy"
+            decoding="async">
+          <div>
+            <p class="kicker">{{ post.data.siloName }} · {{ post.data.readTime }}</p>
+            <h3>{{ post.data.title }}</h3>
+            <p>{{ post.data.dek }}</p>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+
+      <div class="trust" style="margin-top: 1.25rem;">
+        <article>
+          <h3>The job, then the product</h3>
+          <p>Each guide starts with the work. A product is mentioned only if it is one reasonable way to do that work.</p>
+        </article>
+        <article>
+          <h3>No invented tests</h3>
+          <p>We do not invent tests, statistics, or testimonials. Official requirements and published plan details are credited to the source that issued them.</p>
+        </article>
+        <article>
+          <h3>Links you can see</h3>
+          <p>Affiliate links are marked, with a short note just before the first offer link in a guide. The price is the seller’s price.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+</main>

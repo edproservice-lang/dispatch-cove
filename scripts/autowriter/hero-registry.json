@@ -1,0 +1,113 @@
+{
+  "_readme": "Hero and mid-article images already used on Dispatch Cove. The autowriter skips these by source URL/ID and by file or perceptual hash when picking a new hero. Mid-article photos also skip any hero. dhash can be filled on the next autowriter run.",
+  "heroes": [
+    {
+      "slug": "home",
+      "file": "src/assets/images/hero-home-1600.webp",
+      "sha256": "a361ec167530dc1733cb975970809ec4fbabf58d499e7e506c5af23a2a255014",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/truck-semi-transportation-3401529/",
+      "sourceId": "pixabay:3401529",
+      "role": "hero"
+    },
+    {
+      "slug": "getting-started",
+      "file": "src/assets/images/shelf-getting-started-1600.webp",
+      "sha256": "34c730aef60156f97a5bd400ad3df15af872d1bfd6c68323a0c87e1c8770d4c5",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/student-typing-keyboard-text-849825/",
+      "sourceId": "pixabay:849825",
+      "role": "shelf"
+    },
+    {
+      "slug": "load-boards",
+      "file": "src/assets/images/shelf-load-boards-1600.webp",
+      "sha256": "6f329811264876e26f41e697da053df33131d35dc822674a9684bb76a909331a",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/highway-road-trucks-vehicles-3392100/",
+      "sourceId": "pixabay:3392100",
+      "role": "shelf"
+    },
+    {
+      "slug": "factoring",
+      "file": "src/assets/images/shelf-factoring-1600.webp",
+      "sha256": "ad6ff2c5fa1fc3f96b5eaff2cb93ad3c181385f5f68c551849b32baad95157d2",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/calculator-calculation-insurance-385506/",
+      "sourceId": "pixabay:385506",
+      "role": "shelf"
+    },
+    {
+      "slug": "software",
+      "file": "src/assets/images/shelf-software-1600.webp",
+      "sha256": "b5a3a1c3527d62ef5d17419356341e16706962288247220ccf8619a10b7ecd1f",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/desk-laptop-notebook-pen-workspace-593327/",
+      "sourceId": "pixabay:593327",
+      "role": "shelf"
+    },
+    {
+      "slug": "owner-operators",
+      "file": "src/assets/images/shelf-owner-operators-1600.webp",
+      "sha256": "22ea00ee63e3af22f697b3593619ef77d8284a0c74ab6ada4c8567952285f01c",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/peterbilt-truck-tractor-tanker-3578297/",
+      "sourceId": "pixabay:3578297",
+      "role": "shelf"
+    },
+    {
+      "slug": "how-to-become-a-truck-dispatcher-with-no-experience",
+      "file": "src/assets/images/guide-how-to-become-a-truck-dispatcher-with-no-experience-1600.webp",
+      "sha256": "6e326ed7e8ee2ba142d26402833bce14b6437abb41d0a85f0d452b5eb5491a8f",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/laptop-office-hand-writing-3196481/",
+      "sourceId": "pixabay:3196481",
+      "role": "hero"
+    },
+    {
+      "slug": "dat-vs-truckstop-for-a-new-dispatcher",
+      "file": "src/assets/images/guide-dat-vs-truckstop-for-a-new-dispatcher-1600.webp",
+      "sha256": "2bc72bdd08908681c992fa1ab82cd026b4771464daf7817db0dd2be98bc6f78d",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/truck-freight-transportation-2677373/",
+      "sourceId": "pixabay:2677373",
+      "role": "hero"
+    },
+    {
+      "slug": "freight-factoring-recourse-vs-non-recourse",
+      "file": "src/assets/images/guide-freight-factoring-recourse-vs-non-recourse-1600.webp",
+      "sha256": "c9b05b8cc9ba6f5a7b44cdd6f4f1ab5ef122f9af60cf92520624f2bbf5f025e8",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/business-accounting-finance-2700757/",
+      "sourceId": "pixabay:2700757",
+      "role": "hero"
+    },
+    {
+      "slug": "how-to-become-a-truck-dispatcher-with-no-experience-mid",
+      "file": "src/assets/images/mid-how-to-become-a-truck-dispatcher-with-no-experience-1600.webp",
+      "sha256": "628b3a203fa82c497876ae36b5cc3ac37f5e1a41fc9f72573eb42eab91bd7b3d",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/production-facility-logistic-4408573/",
+      "sourceId": "pixabay:4408573",
+      "role": "mid"
+    },
+    {
+      "slug": "dat-vs-truckstop-for-a-new-dispatcher-mid",
+      "file": "src/assets/images/mid-dat-vs-truckstop-for-a-new-dispatcher-1600.webp",
+      "sha256": "7a60f29a7bd5b8284d32a1e831781c606eb68ab0ca0da0a1ea1c51953d270004",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/steering-wheel-cockpit-truck-4059377/",
+      "sourceId": "pixabay:4059377",
+      "role": "mid"
+    },
+    {
+      "slug": "freight-factoring-recourse-vs-non-recourse-mid",
+      "file": "src/assets/images/mid-freight-factoring-recourse-vs-non-recourse-1600.webp",
+      "sha256": "6ccf68dafd064542da7c238ec3ae3f27a763875416378bbcd274f215acb140b8",
+      "dhash": "",
+      "sourceUrl": "https://pixabay.com/photos/bookkeeping-accounting-taxes-615384/",
+      "sourceId": "pixabay:615384",
+      "role": "mid"
+    }
+  ]
+}
