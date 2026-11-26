@@ -146,16 +146,10 @@ p { margin: 0 0 1rem; }
 }
 
 .brand-mark {
-  width: 2.15rem;
-  height: 2.15rem;
-  display: grid;
-  place-items: center;
-  border-radius: 0.45rem;
-  background: var(--moss);
-  color: #f4f1ea;
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: block;
+  flex-shrink: 0;
 }
 
 .nav-toggle {
@@ -777,10 +771,19 @@ h3.recommend-title {
 }
 
 .footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   font-family: var(--display);
   font-size: 1.6rem;
   color: var(--ink);
   margin: 0 0 0.4rem;
+}
+
+.footer-brand img {
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
 }
 
 .footer-grid a { color: var(--ink); text-decoration: none; display: inline-block; padding: 0.18rem 0; }

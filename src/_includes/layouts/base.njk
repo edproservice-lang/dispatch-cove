@@ -20,16 +20,18 @@
   <meta property="og:title" content="{{ metaTitle or title }}">
   <meta property="og:description" content="{{ description }}">
   <meta property="og:url" content="{{ site.url }}{{ page.url }}">
-  <meta property="og:image" content="{{ site.url }}{{ ogImage or "/assets/images/og.jpg" }}">
-  <meta property="og:image:alt" content="{{ ogAlt or "A white semi-truck on a U.S. highway, representing freight dispatch work." }}">
+  <meta property="og:image" content="{{ site.url }}{{ ogImage or "/assets/images/og.png" }}">
+  <meta property="og:image:alt" content="{{ ogAlt or "The Dispatch Cove logo on a cream card, with the tagline Guides for U.S. truck dispatchers and owner-operators." }}">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{{ metaTitle or title }}">
   <meta name="twitter:description" content="{{ description }}">
-  <meta name="twitter:image" content="{{ site.url }}{{ ogImage or "/assets/images/og.jpg" }}">
+  <meta name="twitter:image" content="{{ site.url }}{{ ogImage or "/assets/images/og.png" }}">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
   {% if lcp %}
   <link rel="preload" as="image" href="{{ lcp }}-800.webp" imagesrcset="{{ lcp }}-800.webp 800w, {{ lcp }}-1600.webp 1600w" imagesizes="{{ lcpSizes or "100vw" }}">
   {% endif %}
@@ -54,7 +56,7 @@
         "@id": "{{ site.url }}/#organization",
         "name": "{{ site.name }}",
         "url": "{{ site.url }}/",
-        "logo": "{{ site.url }}/android-chrome-192x192.png",
+        "logo": "{{ site.url }}/assets/images/logo.png",
         "email": "{{ site.email }}",
         "parentOrganization": {
           "@type": "Organization",

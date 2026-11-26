@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80" fill="none" role="img" aria-label="Dispatch Cove">
+  <rect width="80" height="80" rx="18" fill="#16324F"/>
+  <path d="M51.8 58.8A22 22 0 1 1 54.8 22.8" stroke="#F4F1EA" stroke-width="9.2" stroke-linecap="round"/>
+  <path d="M24.5 40.8h26" stroke="#C05612" stroke-width="6.6" stroke-linecap="round"/>
+  <path d="M41 32.2 58 41 41 49.8" stroke="#C05612" stroke-width="6.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
