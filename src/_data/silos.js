@@ -16,7 +16,6 @@ export default [
       "This shelf covers how to enter the work, how a dispatch service is typically paid, and what a small office actually needs on day one. It is general information, not legal, tax, or insurance advice. For the line between a dispatcher and a freight broker, start with FMCSA’s own registration and guidance pages.",
     ],
     soon: [
-      "What you need to start a dispatch business",
     ],
     tools: [
       { href: "/tools/dispatch-fee/", name: "Dispatch fee calculator", note: "See what a percentage or a weekly fee leaves behind." },

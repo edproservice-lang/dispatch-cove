@@ -29,6 +29,15 @@
       "role": "hero"
     },
     {
+      "slug": "how-much-do-truck-dispatchers-charge",
+      "file": "src/assets/images/guide-how-much-do-truck-dispatchers-charge-1600.webp",
+      "sha256": "6629801ab098bcf30bdb84afb425f597855ffe12f007509478a0bebc8244894a",
+      "dhash": "f0c9f6e8699c1a5b",
+      "sourceUrl": "https://pixabay.com/photos/highway-road-trucks-vehicles-3392100/",
+      "sourceId": "3392100",
+      "role": "hero"
+    },
+    {
       "slug": "how-to-become-a-truck-dispatcher-with-no-experience",
       "file": "src/assets/images/guide-how-to-become-a-truck-dispatcher-with-no-experience-1600.webp",
       "sha256": "6e326ed7e8ee2ba142d26402833bce14b6437abb41d0a85f0d452b5eb5491a8f",
@@ -56,12 +65,12 @@
       "role": "hero"
     },
     {
-      "slug": "how-much-do-truck-dispatchers-charge",
-      "file": "src/assets/images/guide-how-much-do-truck-dispatchers-charge-1600.webp",
-      "sha256": "6629801ab098bcf30bdb84afb425f597855ffe12f007509478a0bebc8244894a",
-      "dhash": "f0c9f6e8699c1a5b",
-      "sourceUrl": "https://pixabay.com/photos/highway-road-trucks-vehicles-3392100/",
-      "sourceId": "3392100",
+      "slug": "how-to-start-a-truck-dispatch-business",
+      "file": "src/assets/images/guide-how-to-start-a-truck-dispatch-business-1600.webp",
+      "sha256": "3db0e655e5071faaa94e6a093fd002296c14482018153163a28c5128567466c6",
+      "dhash": "0096b27316694600",
+      "sourceUrl": "https://pixabay.com/photos/apple-computer-desk-workspace-1868496/",
+      "sourceId": "1868496",
       "role": "hero"
     }
   ]
