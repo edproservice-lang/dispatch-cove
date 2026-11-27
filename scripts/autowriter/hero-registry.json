@@ -38,6 +38,15 @@
       "role": "hero"
     },
     {
+      "slug": "truck-dispatcher-vs-freight-broker",
+      "file": "src/assets/images/guide-truck-dispatcher-vs-freight-broker-1600.webp",
+      "sha256": "c7b2dcc6f4bc3d7b45ceb5d4def1703a431264d6230b23afd8def00e7b0b8672",
+      "dhash": "9a99998d35608008",
+      "sourceUrl": "https://pixabay.com/photos/woman-truck-vehicle-driver-fashion-1845572/",
+      "sourceId": "1845572",
+      "role": "hero"
+    },
+    {
       "slug": "dat-vs-truckstop-for-a-new-dispatcher",
       "file": "src/assets/images/guide-dat-vs-truckstop-for-a-new-dispatcher-1600.webp",
       "sha256": "2bc72bdd08908681c992fa1ab82cd026b4771464daf7817db0dd2be98bc6f78d",
@@ -47,12 +56,12 @@
       "role": "hero"
     },
     {
-      "slug": "truck-dispatcher-vs-freight-broker",
-      "file": "src/assets/images/guide-truck-dispatcher-vs-freight-broker-1600.webp",
-      "sha256": "c7b2dcc6f4bc3d7b45ceb5d4def1703a431264d6230b23afd8def00e7b0b8672",
-      "dhash": "9a99998d35608008",
-      "sourceUrl": "https://pixabay.com/photos/woman-truck-vehicle-driver-fashion-1845572/",
-      "sourceId": "1845572",
+      "slug": "how-much-do-truck-dispatchers-charge",
+      "file": "src/assets/images/guide-how-much-do-truck-dispatchers-charge-1600.webp",
+      "sha256": "6629801ab098bcf30bdb84afb425f597855ffe12f007509478a0bebc8244894a",
+      "dhash": "f0c9f6e8699c1a5b",
+      "sourceUrl": "https://pixabay.com/photos/highway-road-trucks-vehicles-3392100/",
+      "sourceId": "3392100",
       "role": "hero"
     }
   ]
